@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "porkage"
+name = "pqg"
 version = "0.1.0"
 description = "Exploring property graph representation in DuckDB"
 authors = ["datadave <605409+datadavev@users.noreply.github.com>"]
