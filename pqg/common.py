@@ -51,8 +51,8 @@ class JSONTruncatedEncoder(json.JSONEncoder):
                 o = o.replace(tzinfo=datetime.timezone.utc)
             return o.isoformat()
         if isinstance(o, str):
-            if len(o) > 40:
-                return o[:40] + '...'
+            if len(o) > 20:
+                return o[:20] + '...'
             return o
         return super().default(o)
 
