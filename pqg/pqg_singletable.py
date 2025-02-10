@@ -43,7 +43,7 @@ class Base:
     n: pqg.common.OptionalStr = None
 
 
-    def __post_init__(self):
+    def __post_init__(self, *_:typing.List[str], **kwargs: typing.Dict[str, typing.Any]):
         """Compute the PID if not already set.
 
         Generated identifiers are prefixed with "anon_" to convey that the
@@ -56,6 +56,7 @@ class Base:
         if self.pid is None:
             self.pid = f"anon_{pqg.common.getUUID()}"
         L.debug("exit: pid = %s", self.pid)
+        super().__post_init__(**kwargs)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -72,7 +73,7 @@ class Edge(Base):
     Edges are used to form composite Things and also to define relationships
     between disjunct things.
     """
-    def __post_init__(self):
+    def __post_init__(self, *_:typing.List[str], **kwargs: typing.Dict[str, typing.Any]):
         """Compute the PID if not already set.
 
         The edge PID is computed form the hash of s,p,o,n
@@ -88,6 +89,7 @@ class Edge(Base):
                 h.update(self.n.encode("utf-8"))
             self.pid = f"anon_{h.hexdigest()}"
         L.debug("exit: pid = %s", self.pid)
+        super().__post_init__(**kwargs)
 
 
 class PQG:
@@ -424,17 +426,17 @@ class PQG:
         dest.append("}")
         return dest
 
-    def toParquet(self, dest_base_name: pathlib.Path):
+    def asParquet(self, dest_base_name: pathlib.Path):
         _L = getLogger()
-        self.close()
-        ddb = duckdb.connect(self.connection_str)
+        #self.close()
+        #ddb = duckdb.connect(self.connection_str)
         node_dest = dest_base_name.parent/f"{dest_base_name.stem}.parquet"
-        with (ddb.cursor() as csr):
+        with self.getCursor() as csr:
             sql = f"COPY (SELECT * FROM node) TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
             sql += "{" + f"primary_key:'{self._node_pk}', node_types:'{json.dumps(self._types)}'" +"});"
             _L.debug(sql)
             csr.execute(sql)
-        ddb.close()
+        #ddb.close()
             #sql = f"COPY (SELECT * FROM edge) TO '{edge_dest}' (FORMAT PARQUET);"
             #_L.debug(sql)
             #csr.execute(sql)
