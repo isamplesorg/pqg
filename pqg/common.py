@@ -37,6 +37,25 @@ class JSONDateTimeEncoder(json.JSONEncoder):
             return o.isoformat()
         return super().default(o)
 
+class JSONTruncatedEncoder(json.JSONEncoder):
+    """Used for display purposes only.
+    This encoder handles dates and truncates long strings, adding ... to the end.
+    This encoder should only be used when the structure rather than content
+    of the json is of interest. E.g. when rendering with PlantUML's JSON viewer.
+    https://plantuml.com/json
+    """
+    def default(self, o: typing.Any) -> typing.Any:
+        if isinstance(o, datetime.datetime):
+            # Force use of timezone
+            if o.tzinfo is None:
+                o = o.replace(tzinfo=datetime.timezone.utc)
+            return o.isoformat()
+        if isinstance(o, str):
+            if len(o) > 40:
+                return o[:40] + '...'
+            return o
+        return super().default(o)
+
 
 class IsDataclass(typing.Protocol):
     # Used to assist with typehints to ascertain an instance is a dataclass
