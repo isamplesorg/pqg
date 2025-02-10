@@ -19,6 +19,13 @@ _DBMS_ = duckdb
 def getLogger():
     return logging.getLogger("pqg")
 
+def is_dataclass_or_dataclasslist(o: typing.Any) -> bool:
+    if isinstance(o, list):
+        if len(o) == 0:
+            return False
+        return dataclasses.is_dataclass(o[0])
+    return dataclasses.is_dataclass(o)
+
 
 @dataclasses.dataclass(kw_only=True)
 class Base:
@@ -56,7 +63,6 @@ class Base:
         if self.pid is None:
             self.pid = f"anon_{pqg.common.getUUID()}"
         L.debug("exit: pid = %s", self.pid)
-        super().__post_init__(**kwargs)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -213,7 +219,7 @@ class PQG:
         if pid in self._pidcache:
             return (pid, self._pidcache[pid])
         with self.getCursor() as csr:
-            res = csr.execute(f"SELECT {self._node_pk}, otype FROM NODE WHERE otype != '_edge_' AND {self._node_pk} = ?", (pid,)).fetchone()
+            res = csr.execute(f"SELECT {self._node_pk}, otype FROM node WHERE otype != '_edge_' AND {self._node_pk} = ?", (pid,)).fetchone()
             if res is not None:
                 self._pidcache[pid] = res[1]
             return res
@@ -341,7 +347,7 @@ class PQG:
         data = {}
         for field in dataclasses.fields(o):
             _v = getattr(o, field.name)
-            if dataclasses.is_dataclass(_v):
+            if is_dataclass_or_dataclasslist(_v):
                 deferred.append(field.name)
             else:
                 data[field.name] = _v
@@ -349,10 +355,17 @@ class PQG:
         _L.debug("Added node pid= %s", s_pid)
         for field_name in deferred:
             _v = getattr(o, field_name)
-            o_pid = self._addNode(_v)
-            _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
-            _L.debug("Created edge: %s", _edge)
-            self.addEdge(_edge)
+            if isinstance(_v, list):
+                for element in _v:
+                    o_pid = self._addNode(element)
+                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
+                    _L.debug("Created edge: %s", _edge)
+                    self.addEdge(_edge)
+            else:
+                o_pid = self._addNode(_v)
+                _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
+                _L.debug("Created edge: %s", _edge)
+                self.addEdge(_edge)
         return s_pid
 
     def addNode(self, o:pqg.common.IsDataclass)->str:
@@ -375,7 +388,16 @@ class PQG:
             sql = f"SELECT p, o FROM node WHERE otype='_edge_' AND s = ?"
             edges = csr.execute(sql, [pid]).fetchall()
             for edge in edges:
-                data[edge[0]] = self.getNode(edge[1])
+                # Handle multiple values for related objects.
+                # Convert entry to a list if another value is found
+                if data[edge[0]] is not None:
+                    if isinstance(data[edge[0]], list):
+                        data[edge[0]].append(edge[1])
+                    else:
+                        _tmp = data[edge[0]]
+                        data[edge[0]] = [_tmp, self.getNode(edge[1])]
+                else:
+                    data[edge[0]] = self.getNode(edge[1])
         return data
 
     def getNodeIds(self, pid:str)->typing.Set[str]:
