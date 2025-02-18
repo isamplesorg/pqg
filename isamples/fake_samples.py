@@ -14,16 +14,23 @@ import faker
 generator = faker.Faker()
 
 fake_project_names = [f"project-{generator.word()}" for _ in range(5)]
-
+fake_place_names = [f"place-{generator.city()}" for _ in range(20)]
 
 def fake_Agent(i: int) -> Agent:
+    name = generator.name()
     return Agent(
         pid=f"agent_{i}",
-        label=generator.name(),
         affiliation=generator.administrative_unit(),
         contact_information=generator.address(),
-        role=generator.job()
+        name=name,
+        role=generator.job(),
+        label= name,
     )
+
+
+def fake_Agents(count:int = 1, base:int=0) -> typing.Generator[Agent, None, None]:
+    for i in range(count):
+        yield fake_Agent(base+i)
 
 
 def fake_GeospatialCoordLocation(i: int) -> GeospatialCoordLocation:
@@ -35,6 +42,9 @@ def fake_GeospatialCoordLocation(i: int) -> GeospatialCoordLocation:
         elevation=f"{generator.random_int(-500, 10000)}m MSL"
     )
 
+def fake_GeospatialCoordLocations(count:int = 1, base:int = 0) -> typing.Generator[GeospatialCoordLocation, None, None]:
+    for i in range(count):
+        yield fake_GeospatialCoordLocation(base+i)
 
 def fake_IdentifiedConcept(domain: str) -> IdentifiedConcept:
     uri = f"https://fake.uri/{domain}/"
@@ -47,6 +57,11 @@ def fake_IdentifiedConcept(domain: str) -> IdentifiedConcept:
     )
 
 
+def fake_IdentifiedConcepts(domain:str, count:int = 1) -> typing.Generator[IdentifiedConcept, None, None]:
+    for i in range(count):
+        yield fake_IdentifiedConcept(domain)
+
+
 def fake_SampleRelation(i: int, target: str) -> SampleRelation:
     return SampleRelation(
         pid=f"rel_{i}",
@@ -57,25 +72,62 @@ def fake_SampleRelation(i: int, target: str) -> SampleRelation:
     )
 
 
-def fake_SamplingSite(i: int, sample_location: typing.Optional[GeospatialCoordLocation] = None) -> SamplingSite:
+def fake_SampleRelations(target:str, count:int = 1, base:int=0) -> typing.Generator[SampleRelation, None, None]:
+    for i in range(count):
+        yield fake_SampleRelation(base+i, target)
+
+
+def fake_SamplingSite(
+        i: int,
+        sample_location: typing.Optional[GeospatialCoordLocation] = None,
+        is_part_of: typing.Optional[str] = None,
+) -> SamplingSite:
     return SamplingSite(
         pid=f"site_{i}",
         description=generator.text(),
         label=generator.word(part_of_speech="noun"),  # noun
-        place_name=[generator.city(),],
-        sample_location=sample_location
+        place_name=list(generator.random_choices(fake_place_names, 2)),
+        site_location=sample_location,
+        is_part_of=[is_part_of,],
     )
 
+def fake_SamplingSites(
+        count:int = 1,
+        base:int = 0,
+        sample_location: typing.Optional[GeospatialCoordLocation] = None,
+) -> typing.Generator[SamplingSite, None, None]:
+    _fakes = [None, ]
+    for i in range(count):
+        # randomly select a site that the newly generated one is part of
+        is_part_of = _fakes[generator.random_int(0, len(_fakes)-1)]
+        entry = fake_SamplingSite(
+            base+i,
+            sample_location=sample_location,
+            is_part_of=is_part_of,
+        )
+        _fakes.append(entry.pid)
+        yield entry
 
-def fake_MaterialSampleCuration(i: int, responsibility: typing.Optional[Agent] = None) -> MaterialSampleCuration:
+
+def fake_MaterialSampleCuration(
+        i: int,
+        responsibility:typing.Optional[typing.List[Agent]] = None
+) -> MaterialSampleCuration:
     return MaterialSampleCuration(
         pid=f"cur_{i}",
-        responsibility=None if responsibility is None else [responsibility,],
+        responsibility=responsibility,
         label=generator.word(),
         description=generator.text(),
         access_constraints=[generator.word(), ]
     )
 
+def fake_MaterialSampleCurations(
+        count:int = 1,
+        base:int = 0,
+        responsibility:typing.Optional[typing.List[Agent]] = None
+)-> typing.Generator[MaterialSampleCuration, None, None]:
+    for i in range(count):
+        yield fake_MaterialSampleCuration(base+i, responsibility=responsibility)
 
 def fake_SamplingEvent(
         i: int,
@@ -83,6 +135,7 @@ def fake_SamplingEvent(
         sampling_site: typing.Optional[SamplingSite] = None,
         sample_location: typing.Optional[GeospatialCoordLocation] = None,
         has_context_category: typing.Optional[IdentifiedConcept] = None,
+        authorized_by: typing.Optional[typing.List[Agent]] = None,
 ) -> SamplingEvent:
     hcc = None
     if has_context_category is not None:
@@ -93,6 +146,7 @@ def fake_SamplingEvent(
     return SamplingEvent(
         pid=f"event_{i}",
         description=generator.text(),
+        authorized_by=authorized_by,
         has_context_category=hcc,
         has_feature_of_interest=generator.word(part_of_speech="noun"),
         label=generator.word(),
@@ -103,13 +157,29 @@ def fake_SamplingEvent(
         sampling_site=sampling_site,
     )
 
+def fake_SamplingEvents(
+        count:int = 1,
+        base:int = 0,
+        responsibility:typing.Optional[typing.List[Agent]] = None,
+        sampling_site:typing.Optional[SamplingSite] = None,
+        sample_location: typing.Optional[GeospatialCoordLocation] = None,
+        authorized_by: typing.Optional[typing.List[Agent]] = None,
+)-> typing.Generator[SamplingEvent, None, None]:
+    for i in range(count):
+        yield fake_SamplingEvent(
+            base+i,
+            responsibility=responsibility,
+            sampling_site=sampling_site,
+            sample_location=sample_location,
+            authorized_by=authorized_by,
+        )
 
 def fake_MaterialSampleRecord(
         i: int,
         curation: typing.Optional[MaterialSampleCuration] = None,
-        has_context_category: typing.Optional[IdentifiedConcept] = None,
-        has_material_category: typing.Optional[IdentifiedConcept] = None,
-        has_sample_object_type: typing.Optional[IdentifiedConcept] = None,
+        has_context_category: typing.List[IdentifiedConcept] = None,
+        has_material_category: typing.List[IdentifiedConcept] = None,
+        has_sample_object_type: typing.List[IdentifiedConcept] = None,
         keywords: typing.Optional[typing.List[IdentifiedConcept]] = None,
         produced_by: typing.Optional[SamplingEvent] = None,
         registrant: typing.Optional[Agent] = None,
@@ -123,10 +193,10 @@ def fake_MaterialSampleRecord(
         curation=curation,
         dc_rights=None,
         description=generator.text(),
-        has_context_category=None if has_context_category is None else [has_context_category,],
-        has_material_category=None if has_material_category is None else [has_material_category,],
-        has_sample_object_type=None if has_sample_object_type is None else [has_sample_object_type,],
-        keywords=None if keywords is None else [keywords,],
+        has_context_category=has_context_category,
+        has_material_category=has_material_category,
+        has_sample_object_type=has_sample_object_type,
+        keywords=None if keywords is None else keywords,
         label=generator.word(),
         last_modified_time=generator.date_time(),
         produced_by=produced_by,
@@ -138,52 +208,70 @@ def fake_MaterialSampleRecord(
 
 
 def make_fakes(g:pqg.PQG, count:int=5):
-    agents = []
-    for i in range(5):
-        agents.append(fake_Agent(i))
+    keywords = list(fake_IdentifiedConcepts("keyword", count=count*5))
 
-    sites = []
-    for i in range(10):
-        loc = fake_GeospatialCoordLocation(i)
-        sites.append(fake_SamplingSite(i, sample_location=loc))
+    context_categories = list(fake_IdentifiedConcepts("context_category", count=count*5))
+    material_categories = list(fake_IdentifiedConcepts("material_category", count=count*5))
+    sample_object_types = list(fake_IdentifiedConcepts("sample_object_type", count=count*5))
 
-    curations = []
-    for i in range(5):
-        curations.append(fake_MaterialSampleCuration(
-            i,
-            responsibility=agents[generator.random_int(min=0, max=len(agents) - 1)])
+    agents = list(fake_Agents(count=count*5))
+
+    locations = list(fake_GeospatialCoordLocations(count=count))
+
+    sites = list(
+        fake_SamplingSites(
+            count=count,
+            base=0,
+            sample_location=locations[generator.random_int(0, len(locations)-1)]
         )
+    )
+
+    curations = list(
+        fake_MaterialSampleCurations(
+            count=count,
+            base=0,
+            responsibility=list(generator.random_choices(agents, 2)),
+        )
+    )
+
+    events = list(fake_SamplingEvents(
+        count=count,
+        base=0,
+        responsibility=list(generator.random_choices(agents, 2)),
+        sampling_site=sites[generator.random_int(0, len(sites)-1)],
+        sample_location=locations[generator.random_int(0, len(locations)-1)],
+    ))
 
     for i in range(count):
-        revent = fake_SamplingEvent(
-            i,
-            responsibility=[
-                agents[0],
-                agents[generator.random_int(min=1, max=len(agents) - 1)],
-                ],
-            sampling_site=sites[generator.random_int(min=0, max=len(sites) - 1)],
-        )
+        kw = list(generator.random_choices(keywords, 3))
         ms = fake_MaterialSampleRecord(
             i,
-            produced_by=revent,
+            produced_by=events[generator.random_int(min=0, max=len(events) - 1)],
             registrant=agents[generator.random_int(min=0, max=len(agents) - 1)],
             curation=curations[generator.random_int(min=0, max=len(curations) - 1)],
+            keywords=kw,
+            has_context_category=list(generator.random_choices(context_categories, 2)),
+            has_material_category=list(generator.random_choices(material_categories,2)),
+            has_sample_object_type=list(generator.random_choices(sample_object_types, 2)),
         )
         g.addNode(ms)
 
 
 def get_record(g, pid):
     record = g.getNode(pid)
+    #print(record)
     print(json.dumps(record, indent=2, cls=pqg.JSONDateTimeEncoder))
 
 
-def main():
-    g = createGraph("../data/test_1.ddb")
+def main(dest:str=None):
+    g = createGraph(dest)
     make_fakes(g, count=1)
     get_record(g, "msr_0")
-    g.asParquet(pathlib.Path("../data/test_1.parquet"))
+    if dest is not None:
+        g.asParquet(pathlib.Path(dest))
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    #main("data/test_0.ddb")
     main()

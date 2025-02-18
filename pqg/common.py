@@ -1,20 +1,27 @@
 
 import dataclasses
 import datetime
+import decimal
 import json
 import time
 import typing
 import uuid
+
+import linkml_runtime.utils.metamodelcore
 
 # Aliases for type hint convenience
 OptionalStr = typing.Optional[str]
 OptionalInt = typing.Optional[int]
 OptionalFloat = typing.Optional[float]
 OptionalDateTime = typing.Optional[datetime.datetime]
+OptionalDecimal = typing.Optional[decimal.Decimal]
 StringList = typing.Optional[typing.List[str]]
 IntegerList = typing.Optional[typing.List[int]]
 FloatList = typing.Optional[typing.List[float]]
 DateTimeList = typing.Optional[typing.List[datetime.datetime]]
+LinkmlOptionalStringList = typing.Union[str, typing.List[str], None]
+LinkmlBoolean = typing.Union[bool, linkml_runtime.utils.metamodelcore.Bool, None]
+LinkmlDateTime = typing.Union[str, linkml_runtime.utils.metamodelcore.XSDDateTime]
 
 def getUnixTimestamp():
     return int(time.time())
@@ -80,24 +87,103 @@ def simpleFields(cls:IsDataclass) ->typing.List[dataclasses.Field]:
             fields.append(field)
     return fields
 
+def typeish(t: type):
+    kinds = (bool, int, str, float, datetime.datetime, decimal.Decimal)
+    if t is None:
+        return None
+    if t in kinds:
+        return t
+    else:
+        for tt in typing.get_args(t):
+            res = typeish(tt)
+            if res is not None:
+                return res
+        res = typeish(typing.get_origin(t))
+        if res is not None:
+            return res
+    return None
 
-def fieldToSQLCreate(f:dataclasses.Field, primary_key_field:str="pid") -> str:
+
+def listish(t: type)-> bool:
+    if t is None:
+        return False
+    if t == list:
+        return True
+    else:
+        if typing.get_origin(t) == list:
+            return True
+        for tt in typing.get_args(t):
+            res = listish(tt)
+            if res:
+                return res
+    return False
+
+
+def dataclassish(t: type)->bool:
+    if t is None:
+        return False
+    if dataclasses.is_dataclass(t):
+        return True
+    if t == dict:
+        return True
+    if dataclasses.is_dataclass(typing.get_origin(t)):
+        return True
+    if isinstance(t, typing.ForwardRef):
+        tt = t._evaluate(globals(), locals(), frozenset())
+        return dataclassish(tt)
+    for tt in typing.get_args(t):
+        res = dataclassish(tt)
+        if res:
+            return res
+    return False
+
+
+def typeToSQL(t: type) -> typing.Optional[str]:
     types = {
         str: "VARCHAR",
         int: "INTEGER",
         float: "DOUBLE",
         bool: "BOOLEAN",
         datetime.datetime: "TIMESTAMPTZ",
-        OptionalStr: "VARCHAR",
-        OptionalInt: "INTEGER",
-        OptionalFloat: "DOUBLE",
-        OptionalDateTime: "TIMESTAMPTZ",
-        StringList: "VARCHAR[]",
-        IntegerList: "INTEGER[]",
-        FloatList: "DOUBLE[]",
-        DateTimeList: "TIMESTAMPTZ[]",
+        decimal.Decimal: "DOUBLE",
     }
-    v = f"{f.name} {types.get(f.type, 'JSON')}"
+    if dataclassish(t):
+        return None
+    is_list = listish(t)
+    base_type = typeish(t)
+    sql_type = types.get(base_type, None)
+    if sql_type is None:
+        return None
+    if is_list:
+        sql_type += "[]"
+    return sql_type
+
+
+def fieldToSQLCreate(f:dataclasses.Field, primary_key_field:str="pid") -> str:
+    # types = {
+    #     str: "VARCHAR",
+    #     int: "INTEGER",
+    #     float: "DOUBLE",
+    #     bool: "BOOLEAN",
+    #     datetime.datetime: "TIMESTAMPTZ",
+    #     OptionalStr: "VARCHAR",
+    #     OptionalInt: "INTEGER",
+    #     OptionalFloat: "DOUBLE",
+    #     OptionalDateTime: "TIMESTAMPTZ",
+    #     StringList: "VARCHAR[]",
+    #     IntegerList: "INTEGER[]",
+    #     FloatList: "DOUBLE[]",
+    #     DateTimeList: "TIMESTAMPTZ[]",
+    #     decimal.Decimal: "DOUBLE",
+    #     OptionalDecimal: "DOUBLE",
+    #     LinkmlOptionalStringList: "VARCHAR[]",
+    #     LinkmlBoolean: "BOOLEAN",
+    #     LinkmlDateTime: "TIMESTAMPTZ",
+    # }
+    sql_type = typeToSQL(f.type)
+    if sql_type is None:
+        raise ValueError("Unmapped field type: %s" % (f.type,))
+    v = f"{f.name} {sql_type}"
     if f.name == primary_key_field:
         return f"{v} PRIMARY KEY"
     if f.default is not dataclasses.MISSING:

@@ -11,6 +11,7 @@ import duckdb
 import sqlite3
 
 import pqg.common
+from pqg import __version__
 
 _DBMS_ = duckdb
 #_DBMS_ = sqlite3
@@ -48,6 +49,11 @@ class Base:
     o: pqg.common.OptionalStr = None
     # name of graph containing this relation
     n: pqg.common.OptionalStr = None
+    # sort order of relation. Used when multiple relations
+    # exist of the same predicate to retain the original order.
+    # Consider using broad steps of e.g. 10s or 100s to facilitate later insertions
+    #TODO: support order of insertion. Need to adjust SQL and object get/set
+    #i: pqg.common.OptionalInt = 1
 
 
     def __post_init__(self, *_:typing.List[str], **kwargs: typing.Dict[str, typing.Any]):
@@ -122,7 +128,8 @@ class PQG:
         # a dict of {class_name: {field_name: sql_type, }, }
         self._types:typing.Dict[str, typing.Dict[str, str]] = {}
         #self._edgefields = ('pid', 'tcreated', 'tmodified', 'otype', 's', 'p', 'o', 'n', 'altids')
-        self._edgefields = ('pid', 'otype', 's', 'p', 'o', 'n', 'altids')
+        self._edgefields = ('pid', 'otype', 's', 'p', 'o', 'n', 'altids',)
+        self._literal_field_names = []
 
     @contextlib.contextmanager
     def getCursor(self, as_dict:bool=False):
@@ -149,27 +156,31 @@ class PQG:
         stored in the graph.
         """
         fieldset = {}
-        for field in dataclasses.fields(cls):
-            if dataclasses.is_dataclass(field.type):
-                self.registerType(field.type)
-            else:
-                if field.name not in self._edgefields:
-                    fieldset[field.name] = pqg.common.fieldToSQLCreate(field, primary_key_field=self._node_pk)
-        self._types[cls.__name__] = fieldset
+        try:
+            for field in dataclasses.fields(cls):
+                #if dataclasses.is_dataclass(field.type):
+                if pqg.common.dataclassish(field.type):
+                    self.registerType(field.type)
+                else:
+                    if field.name not in self._edgefields:
+                        fieldset[field.name] = pqg.common.fieldToSQLCreate(field, primary_key_field=self._node_pk)
+            self._types[cls.__name__] = fieldset
+        except TypeError as e:
+            pass
         return self._types
 
     def fieldUnion(self)-> typing.Set[dataclasses.Field]:
         """Return the set fields that is the union across all registered types.
         """
-        def _fieldUnion(cls:pqg.common.IsDataclass) -> typing.Set[dataclasses.Field]:
-            fields = set()
-            for field in dataclasses.fields(cls):
-                _L.debug("fieldUnion: %s", field)
-                if dataclasses.is_dataclass(field.type):
-                    fields |= _fieldUnion(field.type)
-                else:
-                    fields.add(field)
-            return fields
+        # def _fieldUnion(cls:pqg.common.IsDataclass) -> typing.Set[dataclasses.Field]:
+        #     fields = set()
+        #     for field in dataclasses.fields(cls):
+        #         _L.debug("fieldUnion: %s", field)
+        #         if dataclasses.is_dataclass(field.type):
+        #             fields |= _fieldUnion(field.type)
+        #         else:
+        #             fields.add(field)
+        #     return fields
 
         _L = getLogger()
         fieldset = set()
@@ -178,17 +189,58 @@ class PQG:
                 fieldset.add((fieldname, fieldtype))
         return fieldset
 
+    def _loadmetadata(self):
+        """
+        If existing content, then loads the list of fields and classes.
+        """
+        _L = getLogger()
+        with self.getCursor() as csr:
+            # fetch the last row in the metadata table (should only be one row anyway)
+            meta = csr.execute("SELECT version,classes, edgefields, literalfields FROM metadata ORDER BY rowid DESC LIMIT 1;").fetchone()
+            if meta is None:
+                _L.info("No metadata available.")
+                return
+            if meta[0] != __version__:
+                _L.warning("Version mismatch. PQG version = %s. Metadata version = %s", __version__, meta[0])
+            self._types = json.loads(meta[1])
+            self._edgefields = meta[2]
+            self._literal_field_names = meta[3]
+
+
     def initialize(self, classes:typing.List[pqg.common.IsDataclass]):
         """
         DuckDB DDL for property graph.
+
+        classes is a list
         """
+        # Create the metadata tables if it doesn't exist.
+        with self.getCursor() as csr:
+            csr.execute("""CREATE TABLE IF NOT EXISTS metadata (
+                version VARCHAR,
+                classes JSON,
+                edgefields VARCHAR[],
+                literalfields VARCHAR[],
+            );""")
+        # Load existing graph metadata if any
+        self._loadmetadata()
+        if self._types != {}:
+            # TODO: update metadata if there's new classes
+            return
+        #
         for cls in classes:
             self.registerType(cls)
         node_fields = []
         for field in self.fieldUnion():
             node_fields.append(field[1])
+            self._literal_field_names.append(field[0])
+        self._literal_field_names += list(self._edgefields)
         sql = []
-
+        sql.append(f"""CREATE TABLE IF NOT EXISTS metadata (
+            version VARCHAR,
+            classes JSON,
+            edgefields VARCHAR[],
+            literalfields VARCHAR[],
+        );""")
         sql.append(f"""CREATE TABLE IF NOT EXISTS node (
             pid VARCHAR PRIMARY KEY,
             tcreated INTEGER DEFAULT {self._default_timestamp},
@@ -206,14 +258,20 @@ class PQG:
         sql.append("CREATE INDEX IF NOT EXISTS edge_p ON node (p);")
         sql.append("CREATE INDEX IF NOT EXISTS edge_o ON node (o);")
         sql.append("CREATE INDEX IF NOT EXISTS edge_n ON node (n);")
-
         _L = getLogger()
         with self.getCursor() as csr:
+            # Create the database structure
             for statement in sql:
                 _L.debug(statement)
                 csr.execute(statement)
                 #csr.commit()
                 self._connection.commit()
+            csr.execute("DELETE FROM metadata;")
+            self._connection.commit()
+            csr.execute("INSERT INTO metadata (version, classes, edgefields, literalfields) VALUES (?, ?, ?, ?)",
+                        (__version__, self._types, self._edgefields, self._literal_field_names))
+            self._connection.commit()
+
 
     def nodeExists(self, pid:str)->typing.Optional[typing.Tuple[str, str]]:
         if pid in self._pidcache:
@@ -347,10 +405,11 @@ class PQG:
         data = {}
         for field in dataclasses.fields(o):
             _v = getattr(o, field.name)
-            if is_dataclass_or_dataclasslist(_v):
+            if is_dataclass_or_dataclasslist(_v) or str(type(_v)) in self._types:
                 deferred.append(field.name)
             else:
-                data[field.name] = _v
+                if field.name in self._literal_field_names:
+                    data[field.name] = _v
         s_pid = self.addNodeEntry(otype, data)
         _L.debug("Added node pid= %s", s_pid)
         for field_name in deferred:
@@ -362,10 +421,11 @@ class PQG:
                     _L.debug("Created edge: %s", _edge)
                     self.addEdge(_edge)
             else:
-                o_pid = self._addNode(_v)
-                _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
-                _L.debug("Created edge: %s", _edge)
-                self.addEdge(_edge)
+                if _v is not None:
+                    o_pid = self._addNode(_v)
+                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
+                    _L.debug("Created edge: %s", _edge)
+                    self.addEdge(_edge)
         return s_pid
 
     def addNode(self, o:pqg.common.IsDataclass)->str:
@@ -390,7 +450,7 @@ class PQG:
             for edge in edges:
                 # Handle multiple values for related objects.
                 # Convert entry to a list if another value is found
-                if data[edge[0]] is not None:
+                if data.get(edge[0]) is not None:
                     if isinstance(data[edge[0]], list):
                         data[edge[0]].append(edge[1])
                     else:
@@ -413,10 +473,19 @@ class PQG:
                 result = result.union(self.getNodeIds(edge[1]))
         return result
 
+    def getIds(self)->typing.Iterator[typing.Tuple[str, str]]:
+        batch_size = 100
+        with self.getCursor() as csr:
+            result = csr.sql(f"SELECT otype, pid FROM node;")
+            while batch := result.fetchmany(size=batch_size):
+                for row in batch:
+                    yield row[0], row[1]
+
     def toGraphviz(
             self,
             nlights:typing.Optional[list[str]]=None,
             elights:typing.Optional[list[str]]=None) -> list[str]:
+        # todo: Move this to a utility or something
 
         def qlabel(v):
             return f'"{v}"'
@@ -450,18 +519,31 @@ class PQG:
 
     def asParquet(self, dest_base_name: pathlib.Path):
         _L = getLogger()
-        #self.close()
-        #ddb = duckdb.connect(self.connection_str)
         node_dest = dest_base_name.parent/f"{dest_base_name.stem}.parquet"
         with self.getCursor() as csr:
             sql = f"COPY (SELECT * FROM node) TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
             sql += "{" + f"primary_key:'{self._node_pk}', node_types:'{json.dumps(self._types)}'" +"});"
             _L.debug(sql)
             csr.execute(sql)
-        #ddb.close()
-            #sql = f"COPY (SELECT * FROM edge) TO '{edge_dest}' (FORMAT PARQUET);"
-            #_L.debug(sql)
-            #csr.execute(sql)
+
+    def fromParquet(self, source:pathlib.Path):
+        """
+        Populates self with the contents of the specified parquet file.
+
+        Existing entries in the graph remain.
+
+        Entries loaded are upserted. i.e. existing entries are updated, new entries are inserted.
+
+        If a new entry matches an existing entry but with a different type,
+        an error is recorded and the existing entry is unchanged.
+        """
+        # TODO: Can duckdb do a native upsert operation?
+        # TODO: Handle new classes in source
+        # 1. create a temporary table to contain (pid, action, result) for each row in source
+        #    a. select pid from source where pid not in node; = new
+        #    b. select pid from source where pid in node; = existing
+        #    c. select source.pid, source.otype, node.otype from source, node join node.pid=source.pid and source.otype != node.otype
+        pass
 
     def getRootsForPid(
             self,
@@ -514,4 +596,12 @@ class PQG:
                 yield row
                 row = result.fetchone()
 
+    def objectsAtPath(self, path:typing.List[str])->typing.Iterator[str]:
+        """
+        Yield identifiers of objects that match the specified list of predicates.
 
+        For example, the geolocations from which material sampels were collected would be:
+        [produced_by, sample_location, ]
+        """
+        # for predicate in path:
+        #
