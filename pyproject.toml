@@ -20,6 +20,9 @@ dependencies = [
     "rdflib>=7.0.0",
 ]
 
+[project.scripts]
+pqg = 'pqg.__main__:cli'
+
 [dependency-groups]
 dev = [
     "faker>=33.1.0",
