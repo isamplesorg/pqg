@@ -70,8 +70,8 @@ def createGraph(cnstr:str=None):
         SamplingSite,
         SamplingEvent,
         MaterialSampleCuration,
-        MaterialSampleRecord,
         SampleRelation,
+        MaterialSampleRecord,
     ])
     return g
 

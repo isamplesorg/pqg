@@ -1,5 +1,5 @@
 # Auto generated from isamples_core.yaml by pythongen.py version: 0.0.1
-# Generation date: 2025-02-07T14:49:25
+# Generation date: 2025-02-11T16:08:39
 # Schema: materialSample
 #
 # id: https://w3id.org/isample/schema/1.0
@@ -251,7 +251,7 @@ class SamplingSite(YAMLRoot):
     pid: Optional[Union[str, URIorCURIE]] = None
     description: Optional[str] = None
     label: Optional[str] = None
-    sample_location: Optional[Union[dict, "GeospatialCoordLocation"]] = None
+    site_location: Optional[Union[dict, "GeospatialCoordLocation"]] = None
     place_name: Optional[Union[str, List[str]]] = empty_list()
     is_part_of: Optional[Union[Union[str, URIorCURIE], List[Union[str, URIorCURIE]]]] = empty_list()
 
@@ -265,8 +265,8 @@ class SamplingSite(YAMLRoot):
         if self.label is not None and not isinstance(self.label, str):
             self.label = str(self.label)
 
-        if self.sample_location is not None and not isinstance(self.sample_location, GeospatialCoordLocation):
-            self.sample_location = GeospatialCoordLocation(**as_dict(self.sample_location))
+        if self.site_location is not None and not isinstance(self.site_location, GeospatialCoordLocation):
+            self.site_location = GeospatialCoordLocation(**as_dict(self.site_location))
 
         if not isinstance(self.place_name, list):
             self.place_name = [self.place_name] if self.place_name is not None else []
