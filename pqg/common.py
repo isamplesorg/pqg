@@ -160,26 +160,10 @@ def typeToSQL(t: type) -> typing.Optional[str]:
 
 
 def fieldToSQLCreate(f:dataclasses.Field, primary_key_field:str="pid") -> str:
-    # types = {
-    #     str: "VARCHAR",
-    #     int: "INTEGER",
-    #     float: "DOUBLE",
-    #     bool: "BOOLEAN",
-    #     datetime.datetime: "TIMESTAMPTZ",
-    #     OptionalStr: "VARCHAR",
-    #     OptionalInt: "INTEGER",
-    #     OptionalFloat: "DOUBLE",
-    #     OptionalDateTime: "TIMESTAMPTZ",
-    #     StringList: "VARCHAR[]",
-    #     IntegerList: "INTEGER[]",
-    #     FloatList: "DOUBLE[]",
-    #     DateTimeList: "TIMESTAMPTZ[]",
-    #     decimal.Decimal: "DOUBLE",
-    #     OptionalDecimal: "DOUBLE",
-    #     LinkmlOptionalStringList: "VARCHAR[]",
-    #     LinkmlBoolean: "BOOLEAN",
-    #     LinkmlDateTime: "TIMESTAMPTZ",
-    # }
+    """Get the SQL create fragment for a field of a dataclass.
+
+    Raises a ValueError if the field type can not be mapped.
+    """
     sql_type = typeToSQL(f.type)
     if sql_type is None:
         raise ValueError("Unmapped field type: %s" % (f.type,))
