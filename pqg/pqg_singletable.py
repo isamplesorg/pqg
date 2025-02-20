@@ -484,18 +484,23 @@ class PQG:
     def toGraphviz(
             self,
             nlights:typing.Optional[list[str]]=None,
-            elights:typing.Optional[list[str]]=None) -> list[str]:
+            elights:typing.Optional[list[str]]=None,
+            rankdir=None,
+    ) -> list[str]:
         # todo: Move this to a utility or something
 
         def qlabel(v):
             return f'"{v}"'
 
+        if rankdir is None:
+            rankdir = 'LR'
         if nlights is None:
             nlights = []
         if elights is None:
             elights = []
         dest = [
             "digraph {",
+            f'rankdir="{rankdir}"',
             "node [shape=record, fontname=\"JetBrains Mono\", fontsize=10];",
             "edge [fontname=\"JetBrains Mono\", fontsize=8]",
         ]
@@ -605,3 +610,4 @@ class PQG:
         """
         # for predicate in path:
         #
+        pass

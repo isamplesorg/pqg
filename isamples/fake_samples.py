@@ -20,8 +20,8 @@ def fake_Agent(i: int) -> Agent:
     name = generator.name()
     return Agent(
         pid=f"agent_{i}",
-        affiliation=generator.administrative_unit(),
-        contact_information=generator.address(),
+        affiliation=str(generator.administrative_unit()),
+        contact_information=str(generator.address()),
         name=name,
         role=generator.job(),
         label= name,
