@@ -113,44 +113,64 @@ class PQG:
     Notes:
         List of params for IN, https://stackoverflow.com/questions/78364497/duckdb-prepared-statement-list
     """
-    def __init__(self, connection_str: pqg.common.OptionalStr=None, primary_key_field:str=None) -> None:
-        if connection_str is None:
-            connection_str = ":memory:"
-        self.connection_str = connection_str
+    def __init__(
+            self, 
+            dbinstance: duckdb.duckdb.DuckDBPyConnection, 
+            source: pqg.common.OptionalStr=None, 
+            primary_key_field:str=None
+        ) -> None:
+        self._isparquet = False
         self._default_timestamp = "epoch(current_timestamp)::integer"
         if _DBMS_ == sqlite3:
             self._default_timestamp = "(unixepoch())"
-        self._connection = None
+        self._connection = dbinstance
+        # Alway load the spatial extension
+        self._connection.execute("INSTALL spatial; LOAD spatial;")
+        self.geometry_x_field = "longitude"
+        self.geometry_y_field = "latitude"
         self._pidcache = {}
+        if source is not None:
+            source = source.strip()
+            if source.endswith(".parquet"):
+                source = f"read_parquet('{source}')"
+            if source.startswith("read_parquet("):
+                self._isparquet = True
+
+        # Name of the source table in the data store
+        self._table = "node"
+        if source is not None:
+            self._table = source
+        # Name of the primary key column for rows.
+        # This is consistent across all nodes and edges in the graph.
         self._node_pk: str = "pid"
         if primary_key_field is not None:
             self._node_pk: str = primary_key_field
         # a dict of {class_name: {field_name: sql_type, }, }
         self._types:typing.Dict[str, typing.Dict[str, str]] = {}
-        #self._edgefields = ('pid', 'tcreated', 'tmodified', 'otype', 's', 'p', 'o', 'n', 'altids')
-        self._edgefields = ('pid', 'otype', 's', 'p', 'o', 'n', 'altids',)
+        # Fields that are in edge records
+        self._edgefields = ('pid', 'otype', 's', 'p', 'o', 'n', 'altids', 'geometry', )
         self._literal_field_names = []
 
     @contextlib.contextmanager
     def getCursor(self, as_dict:bool=False):
-        if self._connection is None:
-            self._connection = _DBMS_.connect(self.connection_str)
         yield self._connection.cursor()
 
     def close(self) -> None:
-        if self._connection is not None:
-            self._connection.close()
+        #if self._connection is not None:
+        #    self._connection.close()
         self._connection = None
 
     def registerType(self, cls:pqg.common.IsDataclass)->typing.Dict[str, typing.Dict[str, str]]:
         """Registers a class with the graph.
 
-        If a class references other classes, they too are registered, recursively.
+        If a class references other classes, they too are registered, recursively. Note
+        however, that because of how linkml relations are defined, it is usually necessary
+        to add all individual linkml object types by calling registerType with each linkml type.
 
         This must be done prior to calling initialize().
 
         Registering classes is necessary for generating the appropriate nodetable structure
-        and for deserializing from the data store.
+        that is used for deserializing from the data store.
 
         Each row of the node table contains the union of simple fields from all data types
         stored in the graph.
@@ -158,10 +178,12 @@ class PQG:
         fieldset = {}
         try:
             for field in dataclasses.fields(cls):
-                #if dataclasses.is_dataclass(field.type):
+                # if the field smells like a dataclass
                 if pqg.common.dataclassish(field.type):
+                    # recurse into the properties of that field
                     self.registerType(field.type)
                 else:
+                    # Otherwise add the field unless it coincides with a pre-defined field
                     if field.name not in self._edgefields:
                         fieldset[field.name] = pqg.common.fieldToSQLCreate(field, primary_key_field=self._node_pk)
             self._types[cls.__name__] = fieldset
@@ -170,42 +192,60 @@ class PQG:
         return self._types
 
     def fieldUnion(self)-> typing.Set[dataclasses.Field]:
-        """Return the set fields that is the union across all registered types.
+        """Return the set of fields that is the union across all registered types. This
+        lit of fields is used to define the columns in the store.
         """
-        # def _fieldUnion(cls:pqg.common.IsDataclass) -> typing.Set[dataclasses.Field]:
-        #     fields = set()
-        #     for field in dataclasses.fields(cls):
-        #         _L.debug("fieldUnion: %s", field)
-        #         if dataclasses.is_dataclass(field.type):
-        #             fields |= _fieldUnion(field.type)
-        #         else:
-        #             fields.add(field)
-        #     return fields
-
-        _L = getLogger()
         fieldset = set()
         for otype, fields in self._types.items():
             for fieldname, fieldtype in fields.items():
                 fieldset.add((fieldname, fieldtype))
         return fieldset
 
-    def _loadmetadata(self):
+    def loadMetadataSql(self):
         """
         If existing content, then loads the list of fields and classes.
+        #TODO: handle upstream changes in registered class structure. 
         """
         _L = getLogger()
         with self.getCursor() as csr:
             # fetch the last row in the metadata table (should only be one row anyway)
-            meta = csr.execute("SELECT version,classes, edgefields, literalfields FROM metadata ORDER BY rowid DESC LIMIT 1;").fetchone()
+            meta = csr.execute("""SELECT version, source, pkcolumn, classes, edgefields, literalfields 
+                FROM metadata WHERE source=? ORDER BY rowid DESC LIMIT 1;""", (self._table, )).fetchone()
             if meta is None:
                 _L.info("No metadata available.")
                 return
             if meta[0] != __version__:
                 _L.warning("Version mismatch. PQG version = %s. Metadata version = %s", __version__, meta[0])
-            self._types = json.loads(meta[1])
-            self._edgefields = meta[2]
-            self._literal_field_names = meta[3]
+            self._node_pk = meta[1]
+            self._types = json.loads(meta[2])
+            self._edgefields = meta[3]
+            self._literal_field_names = meta[4]
 
+    def loadMetadataParquet(self):
+        if not self._isparquet:
+            raise ValueError(f"Not a parquet source {self._table}")
+        _L = getLogger()
+        kv_source = self._table.replace("read_parquet(", "parquet_kv_metadata(", 1)
+        version = None
+        with self.getCursor() as csr:
+            results = csr.execute(f"SELECT * FROM {kv_source} WHERE decode(key) LIKE 'pqg_%'").fetchall()
+            for row in results:
+                k = row[1].decode("utf-8")
+                if k == 'pqg_version':
+                    version = row[2].decode("utf-8")
+                elif k == 'pqg_primary_key':
+                    self._node_pk = row[2].decode("utf-8")
+                elif k == 'pqg_node_types':
+                    self._types = json.loads(row[2].decode("utf-8"))
+                elif k == 'pqg_edge_fields':
+                    self._edgefields = json.loads(row[2].decode("utf-8"))
+                elif k == 'pqg_literal_fields':
+                    self._literal_field_names = json.loads(row[2].decode("utf-8"))
+        if version != __version__:
+            _L.warning("Source version of %s different to current of %s", version, __version__)
+    
+    def load(self):
+        pass
 
     def initialize(self, classes:typing.List[pqg.common.IsDataclass]):
         """
@@ -213,35 +253,33 @@ class PQG:
 
         classes is a list
         """
+        if self._isparquet:
+            raise ValueError("Can not initialize a Parquet data source.")
         # Create the metadata tables if it doesn't exist.
         with self.getCursor() as csr:
+            #csr.execute("INSTALL spatial; LOAD spatial;")
             csr.execute("""CREATE TABLE IF NOT EXISTS metadata (
                 version VARCHAR,
+                source VARCHAR,
+                pkcolumn VARCHAR,
                 classes JSON,
                 edgefields VARCHAR[],
                 literalfields VARCHAR[],
             );""")
         # Load existing graph metadata if any
-        self._loadmetadata()
-        if self._types != {}:
-            # TODO: update metadata if there's new classes
-            return
-        #
+        self.loadMetadataSql()
+        # Figure out the column definitions
         for cls in classes:
             self.registerType(cls)
-        node_fields = []
+        all_fields = []
         for field in self.fieldUnion():
-            node_fields.append(field[1])
+            # [1] is the SQL for defining the column
+            all_fields.append(field[1])
+            # [0] is the name of the field (column)
             self._literal_field_names.append(field[0])
         self._literal_field_names += list(self._edgefields)
         sql = []
-        sql.append(f"""CREATE TABLE IF NOT EXISTS metadata (
-            version VARCHAR,
-            classes JSON,
-            edgefields VARCHAR[],
-            literalfields VARCHAR[],
-        );""")
-        sql.append(f"""CREATE TABLE IF NOT EXISTS node (
+        sql.append(f"""CREATE TABLE IF NOT EXISTS {self._table} (
             pid VARCHAR PRIMARY KEY,
             tcreated INTEGER DEFAULT {self._default_timestamp},
             tmodified INTEGER DEFAULT {self._default_timestamp},
@@ -251,13 +289,14 @@ class PQG:
             o VARCHAR REFERENCES node (pid) DEFAULT NULL,
             n VARCHAR DEFAULT NULL,
             altids VARCHAR[] DEFAULT NULL,
-            {', '.join(node_fields)}
+            geometry GEOMETRY DEFAULT NULL,
+            {', '.join(all_fields)}
         );""")
-        sql.append("CREATE INDEX IF NOT EXISTS node_otype ON node (otype);")
-        sql.append("CREATE INDEX IF NOT EXISTS edge_s ON node (s);")
-        sql.append("CREATE INDEX IF NOT EXISTS edge_p ON node (p);")
-        sql.append("CREATE INDEX IF NOT EXISTS edge_o ON node (o);")
-        sql.append("CREATE INDEX IF NOT EXISTS edge_n ON node (n);")
+        sql.append(f"CREATE INDEX IF NOT EXISTS node_otype ON {self._table} (otype);")
+        sql.append(f"CREATE INDEX IF NOT EXISTS edge_s ON {self._table} (s);")
+        sql.append(f"CREATE INDEX IF NOT EXISTS edge_p ON {self._table} (p);")
+        sql.append(f"CREATE INDEX IF NOT EXISTS edge_o ON {self._table} (o);")
+        sql.append(f"CREATE INDEX IF NOT EXISTS edge_n ON {self._table} (n);")
         _L = getLogger()
         with self.getCursor() as csr:
             # Create the database structure
@@ -266,18 +305,34 @@ class PQG:
                 csr.execute(statement)
                 #csr.commit()
                 self._connection.commit()
-            csr.execute("DELETE FROM metadata;")
+            # Override the existing metadata record
+            csr.execute("DELETE FROM metadata WHERE source=?;", (self._table, ))
             self._connection.commit()
-            csr.execute("INSERT INTO metadata (version, classes, edgefields, literalfields) VALUES (?, ?, ?, ?)",
-                        (__version__, self._types, self._edgefields, self._literal_field_names))
+            csr.execute("INSERT INTO metadata (version, source, pkcolumn, classes, edgefields, literalfields) VALUES (?, ?, ?, ?, ?, ?)",
+                        (__version__, self._table, self._node_pk, self._types, self._edgefields, self._literal_field_names))
             self._connection.commit()
-
+        # The above fully defines a new collection. If working with an existing collection, check if the
+        # existing columns match all of the columns registered, and if not, add new columns as necessary.
+        with self.getCursor() as cr:
+            missing_columns = []
+            existing_columns  = {}
+            tabledef = csr.execute(f"DESCRIBE (SELECT * FROM {self._table} LIMIT 1);").fetchall()
+            for row in tabledef:
+                existing_columns[row[0]] = row[1]
+            for field in self._literal_field_names:
+                if field not in existing_columns.keys():
+                    missing_columns.append(f"{field} {existing_columns[field]}")
+            sql = []
+            for col in missing_columns:
+                _L.info("Adding column %s", col)
+                csr.execute(f"ALTER TABLE {self._table} ADD COLUMN {col};")
+                self._connection.commit()
 
     def nodeExists(self, pid:str)->typing.Optional[typing.Tuple[str, str]]:
         if pid in self._pidcache:
             return (pid, self._pidcache[pid])
         with self.getCursor() as csr:
-            res = csr.execute(f"SELECT {self._node_pk}, otype FROM node WHERE otype != '_edge_' AND {self._node_pk} = ?", (pid,)).fetchone()
+            res = csr.execute(f"SELECT {self._node_pk}, otype FROM {self._table} WHERE otype != '_edge_' AND {self._node_pk} = ?", (pid,)).fetchone()
             if res is not None:
                 self._pidcache[pid] = res[1]
             return res
@@ -286,6 +341,8 @@ class PQG:
         """
         Add a new row to the node table or update a row if it already exists.
         """
+        if self._isparquet:
+            raise ValueError("Parquet based instances are read only.")
         _L = getLogger()
         try:
             pid:str = data[self._node_pk]
@@ -301,11 +358,23 @@ class PQG:
             try:
                 _names = [self._node_pk, "otype", ]
                 _values = [pid, otype, ]
+                lat_lon = {"x":None, "y":None,}
                 for k,v in data.items():
                     if k not in _names:
                         _names.append(k)
                         _values.append(v)
-                sql = f"INSERT INTO node ({', '.join(_names)}) VALUES ({', '.join(['?',]*len(_values))})"
+                        if k == self.geometry_x_field:
+                            lat_lon["x"] = v
+                        elif k == self.geometry_y_field:
+                            lat_lon['y'] = v
+                if lat_lon['x'] is not None and lat_lon['y'] is not None:
+                    _names.append("geometry")
+                sql = f"INSERT INTO {self._table} ({', '.join(_names)}) VALUES ({', '.join(['?',]*len(_values))}"
+                if lat_lon['x'] is not None and lat_lon['y'] is not None:
+                    sql += ", ST_POINT(?,?)"
+                    _values.append(lat_lon['x'])
+                    _values.append(lat_lon['y'])
+                sql += ")"
                 _L.debug("addNodeEntry sql: %s", sql)
                 with self.getCursor() as csr:
                     csr.execute(sql, _values)
@@ -321,7 +390,7 @@ class PQG:
         if ne is None:
             raise ValueError(f"Entry not found for pid = {pid}")
         _fields = [self._node_pk, ] + list(self._types[ne[1]].keys())
-        sql = f"SELECT {', '.join(_fields)} FROM node WHERE {self._node_pk} = ?"
+        sql = f"SELECT {', '.join(_fields)} FROM {self._table} WHERE {self._node_pk} = ?"
         with self.getCursor() as csr:
             values = csr.execute(sql, [pid]).fetchone()
             return dict(zip(_fields, values))
@@ -332,6 +401,8 @@ class PQG:
         Note that edges may exist independently of nodes, e.g. to make an assertion
         between external entities.
         """
+        if self._isparquet:
+            raise ValueError("Parquet based instances are read only.")
         _L = getLogger()
         _L.debug("addEdge: %s", edge.pid)
         existing = None
@@ -346,8 +417,8 @@ class PQG:
                 # ('pid', 'tcreated', 'tmodified', 's', 'p', 'o', 'n', 'label', 'description', 'altids')
                 # epoch(current_timestamp)::integer, epoch(current_timestamp)::integer,
                 csr.execute(
-                    f"""INSERT INTO node ({', '.join(self._edgefields)}) VALUES (
-                        ?, '_edge_', ?, ?, ?, ?, ?
+                    f"""INSERT INTO {self._table} ({', '.join(self._edgefields)}) VALUES (
+                        ?, '_edge_', ?, ?, ?, ?, ?, ?
                     ) RETURNING pid""",
                     (
                         edge.pid,
@@ -356,6 +427,7 @@ class PQG:
                         edge.o,
                         edge.n,
                         edge.altids,
+                        None
                     ),
                 )
                 #csr.commit()
@@ -378,11 +450,11 @@ class PQG:
         n: pqg.common.OptionalStr = None,
     ) -> typing.Optional[Edge]:
         _L = getLogger()
-        return None
+        #return None
         if (id is None) and (s is None or p is None or o is None or n is None):
             raise ValueError("Must provide id or each of s, p, o, n")
         edgefields = ('pid', 's', 'p', 'o', 'n', 'altids')
-        sql = f"SELECT {', '.join(edgefields)} FROM node WHERE otype='_edge_' AND"
+        sql = f"SELECT {', '.join(edgefields)} FROM {self._table} WHERE otype='_edge_' AND"
         if pid is not None:
             sql += " pid = ?"
             qproperties = (pid,)
@@ -445,7 +517,7 @@ class PQG:
         # ? can we construct a JSON representation of the object using CTE
         data = self.getNodeEntry(pid)
         with self.getCursor() as csr:
-            sql = f"SELECT p, o FROM node WHERE otype='_edge_' AND s = ?"
+            sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
             edges = csr.execute(sql, [pid]).fetchall()
             for edge in edges:
                 # Handle multiple values for related objects.
@@ -467,7 +539,7 @@ class PQG:
         result = set()
         result.add(pid)
         with self.getCursor() as csr:
-            sql = f"SELECT p, o FROM node WHERE otype='_edge_' AND s = ?"
+            sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
             edges = csr.execute(sql, [pid]).fetchall()
             for edge in edges:
                 result = result.union(self.getNodeIds(edge[1]))
@@ -476,7 +548,7 @@ class PQG:
     def getIds(self)->typing.Iterator[typing.Tuple[str, str]]:
         batch_size = 100
         with self.getCursor() as csr:
-            result = csr.sql(f"SELECT otype, pid FROM node;")
+            result = csr.sql(f"SELECT otype, pid FROM {self._table};")
             while batch := result.fetchmany(size=batch_size):
                 for row in batch:
                     yield row[0], row[1]
@@ -505,14 +577,14 @@ class PQG:
             "edge [fontname=\"JetBrains Mono\", fontsize=8]",
         ]
         with self.getCursor() as csr:
-            sql = f"SELECT {self._node_pk}, otype, label FROM node WHERE otype != '_edge_';"
+            sql = f"SELECT {self._node_pk}, otype, label FROM {self._table} WHERE otype != '_edge_';"
             csr.execute(sql)
             for n in csr.fetchall():
                 color = ''
                 if n[0] in nlights:
                     color = ',color=red'
                 dest.append(f"{qlabel(n[0])} [label=\"" + "{" + f"{n[0]}|{n[1]}|{n[2]}" + "}\"" + color + "];")
-            sql = f"SELECT {self._node_pk}, s, p, o FROM node WHERE otype='_edge_'"
+            sql = f"SELECT {self._node_pk}, s, p, o FROM {self._table} WHERE otype='_edge_'"
             csr.execute(sql)
             for e in csr.fetchall():
                 color = ''
@@ -525,30 +597,25 @@ class PQG:
     def asParquet(self, dest_base_name: pathlib.Path):
         _L = getLogger()
         node_dest = dest_base_name.parent/f"{dest_base_name.stem}.parquet"
+        # COPY (SELECT * FROM ps ORDER BY 
+        #   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))
+        #   TO 'ps-sorted.parquet'  (FORMAT 'parquet', COMPRESSION 'zstd');
+        # Sort by space filling curve values to improve retrieveal from smaller regions
+        # This will have a performance hit on write, but should both decrease file size and
+        # significantly improve performance of reads in a spatial context
         with self.getCursor() as csr:
-            sql = f"COPY (SELECT * FROM node) TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
-            sql += "{" + f"primary_key:'{self._node_pk}', node_types:'{json.dumps(self._types)}'" +"});"
-            _L.debug(sql)
+            sql = f"COPY (SELECT * FROM {self._table} ORDER BY ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))))"
+            #sql = f"COPY (SELECT * FROM {self._table})"
+            sql += f" TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
+            sql += "{" 
+            sql += f"pqg_version: '{__version__}', "
+            sql += f"pqg_primary_key:'{self._node_pk}', "
+            sql += f"pqg_node_types:'{json.dumps(self._types)}', "
+            sql += f"pqg_edge_fields:'{json.dumps(self._edgefields)}', "
+            sql += f"pqg_literal_fields:'{json.dumps(self._literal_field_names)}'" 
+            sql += "});"
+            print(sql)
             csr.execute(sql)
-
-    def fromParquet(self, source:pathlib.Path):
-        """
-        Populates self with the contents of the specified parquet file.
-
-        Existing entries in the graph remain.
-
-        Entries loaded are upserted. i.e. existing entries are updated, new entries are inserted.
-
-        If a new entry matches an existing entry but with a different type,
-        an error is recorded and the existing entry is unchanged.
-        """
-        # TODO: Can duckdb do a native upsert operation?
-        # TODO: Handle new classes in source
-        # 1. create a temporary table to contain (pid, action, result) for each row in source
-        #    a. select pid from source where pid not in node; = new
-        #    b. select pid from source where pid in node; = existing
-        #    c. select source.pid, source.otype, node.otype from source, node join node.pid=source.pid and source.otype != node.otype
-        pass
 
     def getRootsForPid(
             self,
@@ -557,6 +624,8 @@ class PQG:
             predicates:typing.Optional[typing.List[str]]=None
         )->typing.Iterator[typing.Tuple[str]]:
         """Follow relations starting with o=pid until top items are found.
+
+        For example, given an Agent, which samples reference that agent by any predicate at any depth.
 
         Yields:
             edge_pid        PID of edge
@@ -585,11 +654,11 @@ class PQG:
             p_where = " AND e.p IN $predicates"
             params["predicates"] = predicates
         sql = f"""WITH RECURSIVE entity_for(pid, s, p, o, n, depth, stype) AS (
-            SELECT e.pid, e.s, e.p, e.o, e.n, 1 as depth, node.otype as stype 
-            FROM node AS e JOIN node ON node.pid = e.s WHERE e.o IN $pids {p_where}
+            SELECT e.pid, e.s, e.p, e.o, e.n, 1 as depth, {self._table}.otype as stype 
+            FROM {self._table} AS e JOIN {self._table} ON {self._table}.pid = e.s WHERE e.o IN $pids {p_where}
         UNION ALL
-            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, node.otype as stype,
-            FROM node AS e, entity_for as eg JOIN node ON node.pid = e.s
+            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, {self._table}.otype as stype,
+            FROM {self._table} AS e, entity_for as eg JOIN {self._table} ON {self._table}.pid = e.s
             WHERE e.o = eg.s {p_where}
         ) SELECT pid, s, p, o, n, depth, stype FROM entity_for {t_where};
         """
@@ -601,6 +670,35 @@ class PQG:
                 yield row
                 row = result.fetchone()
 
+    def breadthFirstTraversal(self, pid:str) -> typing.Iterator[typing.Tuple[str, int]]:
+        """Recursively yields (identifier, depth) of objects that are objects of pid or related.
+
+        With statements subject S, predicate P, object O (i.e. all rows with otype=_edge_),
+        and starting subject S(PID), find all objects O for any P, recursing with
+        the next S being any O of S.
+
+        #TODO: add restriction by predicate, graph name
+        """
+        params = {
+            "pid": pid,
+        }
+        sql = f"""WITH RECURSIVE edge_for(s, p, o, depth) AS (
+            SELECT e.s, e.p, e.o, 1 AS depth FROM {self._table} AS e WHERE e.s=$pid AND e.otype='_edge_'
+        UNION ALL
+            SELECT e.s, e.p, e.o, depth+1 AS depth FROM {self._table} AS e, edge_for WHERE e.s=edge_for.o AND e.otype='_edge_'
+        ) SELECT s, p, o, depth FROM edge_for;
+        """
+        L = getLogger()
+        L.info(sql)
+        with self.getCursor() as csr:
+            result = csr.execute(sql, params)
+            row = result.fetchone()
+            while row is not None:
+                yield row
+                row = result.fetchone()
+
+
+
     def objectsAtPath(self, path:typing.List[str])->typing.Iterator[str]:
         """
         Yield identifiers of objects that match the specified list of predicates.
@@ -608,6 +706,5 @@ class PQG:
         For example, the geolocations from which material sampels were collected would be:
         [produced_by, sample_location, ]
         """
-        # for predicate in path:
-        #
-        pass
+        raise NotImplementedError()
+

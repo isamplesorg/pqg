@@ -7,21 +7,28 @@ requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.1.1",
     "graphviz>=0.20.3",
+    "igraph>=0.11.8",
     "jsonasobj2>=1.0.4",
     "jupyter>=1.1.1",
     "lab>=8.3",
     "linkml-runtime>=1.8.3",
     "mashumaro>=3.14",
     "matplotlib>=3.9.2",
-    "networkx>=3.4.2",
+    "networkx[default]>=3.4.2",
     "plotly>=5.24.1",
     "pytz>=2024.2",
     "pyvis>=0.3.2",
     "rdflib>=7.0.0",
+    "rustworkx>=0.16.0",
 ]
 
 [project.scripts]
 pqg = 'pqg.__main__:cli'
+
+[project.optional-dependencies]
+dev = [
+    "pyperclip>=1.9.0",
+]
 
 [dependency-groups]
 dev = [

@@ -6,9 +6,11 @@ import json
 import logging
 import pathlib
 import typing
+import duckdb
+import faker
+
 import pqg
 from isamples import *
-import faker
 
 # Used for generating random-ish values
 generator = faker.Faker()
@@ -264,14 +266,16 @@ def get_record(g, pid):
 
 
 def main(dest:str=None):
-    g = createGraph(dest)
-    make_fakes(g, count=1)
+    dbinstance = duckdb.connect(dest)
+    g = createGraph(dbinstance)
+    make_fakes(g, count=10)
     get_record(g, "msr_0")
     if dest is not None:
         g.asParquet(pathlib.Path(dest))
+    dbinstance.close()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    #main("data/test_0.ddb")
-    main()
+    logging.basicConfig(level=logging.INFO)
+    main("data/test_10.ddb")
+    #main()

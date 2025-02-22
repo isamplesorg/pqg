@@ -61,8 +61,8 @@ class MaterialSampleCuration(pqg.Base, generated.MaterialSampleCuration):
     pass
 
 
-def createGraph(cnstr:str=None):
-    g = pqg.PQG(connection_str=cnstr)
+def createGraph(dbinstance):
+    g = pqg.PQG(dbinstance)
     g.initialize(classes=[
         Agent,
         IdentifiedConcept,
@@ -85,5 +85,3 @@ def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     main()
-
-
