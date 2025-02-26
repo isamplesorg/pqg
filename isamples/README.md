@@ -127,19 +127,17 @@ The possible values of `otype` are defined by the isamples linkml schema, and ar
 
 The `_edge_` rows provide the relationships between objects. For example, the iSamples metadata model identifies that the [`MaterialSampleRecord`](https://isamplesorg.github.io/metadata/MaterialSampleRecord.html) has a property [`registrant`](https://isamplesorg.github.io/metadata/registrant.html), the values of which are instances of [`Agent`](https://isamplesorg.github.io/metadata/Agent.html).
 
-![Alt text](https://g.gravizo.com/source/diagram_01?https://raw.githubusercontent.com/isamplesorg/pqg/refs/heads/main/isamples/README.md)
-<details>
-<summary></summary>
-diagram_01
-digraph example { 
-  rankdir=LR
-  node [shape="record"];
-  msr [label="MaterialSampleRecord |{pid:msr_1}"];
-  agent [label="Agent| {pid:ag_1}"];
-  msr -> agent [label="registrant"]
-}
-diagram_01
-</details>
+```mermaid
+erDiagram
+    MaterialSampleRecord {
+        pid msr_1
+    }
+    Agent {
+        pid agent_1
+    }
+    MaterialSampleRecord }o--o| Agent : registrant
+    
+```
 
 Results in the following records:
 
