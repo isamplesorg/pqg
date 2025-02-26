@@ -136,7 +136,6 @@ erDiagram
         pid agent_1
     }
     MaterialSampleRecord }o--o| Agent : registrant
-    
 ```
 
 Results in the following records:
