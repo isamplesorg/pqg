@@ -5,6 +5,7 @@ cli for pqg.
 import json
 import logging
 import click
+import duckdb
 import pqg
 import pqg.common
 
@@ -16,12 +17,14 @@ def get_logger():
 def cli(ctx):
     logging.basicConfig(level=logging.INFO)
     ctx.ensure_object(dict)
+    ctx.obj['dbinstance'] = duckdb.connect()
 
 @cli.command()
 @click.pass_context
 @click.argument("store", type=click.Path(exists=True))
 def records(ctx, store):
-    graph = pqg.PQG(store)
+    graph = pqg.PQG(ctx.obj['dbinstance'], store)
+    graph.loadMetadata()
     for entry in graph.getIds():
         print(json.dumps(entry))
 
@@ -31,8 +34,8 @@ def records(ctx, store):
 @click.argument("pid")
 @click.option("-e", "--expand", default=False, is_flag=True, help="Expand to include all objects referencing and referced by pid.")
 def record(ctx, store, pid:str, expand:bool):
-    graph = pqg.PQG(store)
-    graph.initialize([])
+    graph = pqg.PQG(ctx.obj['dbinstance'], store)
+    graph.loadMetadata()
     if expand:
         roots = graph.getRootsForPid([pid, ])
         results = []
@@ -50,20 +53,31 @@ def record(ctx, store, pid:str, expand:bool):
 @click.argument("pid")
 @click.option("-p", "--properties", default=False, is_flag=True, help="Include all object properties in output.")
 def tree(ctx, store, pid:str, properties):
-    graph = pqg.PQG(store)
-    graph.initialize([])
+    graph = pqg.PQG(ctx.obj['dbinstance'], store)
+    graph.loadMetadata()
     for entry in graph.breadthFirstTraversal(pid):
         print(f"{entry}")
 
-@cli.command()
+
+@cli.command("types")
 @click.pass_context
 @click.argument("store", type=click.Path(exists=True))
 def list_otypes(ctx, store):
-    graph = pqg.PQG(store)
-    graph.initialize([])
+    graph = pqg.PQG(ctx.obj['dbinstance'], store)
+    graph.loadMetadata()
+    for row in graph.objectCounts():
+        print(row)
 
 
-    #TODO: load PQG from duckdb. Need to persist and retrieve the graph metadata for class management
+@cli.command("predicates")
+@click.pass_context
+@click.argument("store", type=click.Path(exists=True))
+def list_predicates(ctx, store):
+    graph = pqg.PQG(ctx.obj['dbinstance'], store)
+    graph.loadMetadata()
+    for row in graph.predicateCounts():
+        print(row)
+
 
 if __name__ == "__main__":
     cli()

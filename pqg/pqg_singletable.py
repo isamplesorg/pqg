@@ -244,8 +244,11 @@ class PQG:
         if version != __version__:
             _L.warning("Source version of %s different to current of %s", version, __version__)
     
-    def load(self):
-        pass
+    def loadMetadata(self):
+        if self._isparquet:
+            self.loadMetadataParquet()
+        else:
+            self.loadMetadataSql
 
     def initialize(self, classes:typing.List[pqg.common.IsDataclass]):
         """
@@ -359,6 +362,8 @@ class PQG:
                 _names = [self._node_pk, "otype", ]
                 _values = [pid, otype, ]
                 lat_lon = {"x":None, "y":None,}
+                #TODO: Handling of geometry is pretty rough. This should really be something from the object level
+                # rather that kluging tuff together here.
                 for k,v in data.items():
                     if k not in _names:
                         _names.append(k)
@@ -553,6 +558,19 @@ class PQG:
                 for row in batch:
                     yield row[0], row[1]
 
+    def objectCounts(self)->typing.Iterator[typing.Tuple[str, int]]:
+        with self.getCursor() as csr:
+            result = csr.execute(f"SELECT otype, count(*) AS n FROM {self._table} WHERE otype !='_edge_' GROUP BY otype")
+            while row := result.fetchone():
+                yield row[0], row[1]
+
+    def predicateCounts(self)->typing.Iterator[typing.Tuple[str, int]]:
+        with self.getCursor() as csr:
+            result = csr.execute(f"SELECT p, count(*) AS n FROM {self._table} WHERE otype ='_edge_' GROUP BY p")
+            while row := result.fetchone():
+                yield row[0], row[1]
+
+
     def toGraphviz(
             self,
             nlights:typing.Optional[list[str]]=None,
@@ -654,11 +672,11 @@ class PQG:
             p_where = " AND e.p IN $predicates"
             params["predicates"] = predicates
         sql = f"""WITH RECURSIVE entity_for(pid, s, p, o, n, depth, stype) AS (
-            SELECT e.pid, e.s, e.p, e.o, e.n, 1 as depth, {self._table}.otype as stype 
-            FROM {self._table} AS e JOIN {self._table} ON {self._table}.pid = e.s WHERE e.o IN $pids {p_where}
+            SELECT e.pid, e.s, e.p, e.o, e.n, 1 as depth, src.otype as stype 
+            FROM {self._table} AS e JOIN {self._table} as src ON src.pid = e.s WHERE e.o IN $pids {p_where}
         UNION ALL
-            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, {self._table}.otype as stype,
-            FROM {self._table} AS e, entity_for as eg JOIN {self._table} ON {self._table}.pid = e.s
+            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, src.otype as stype,
+            FROM {self._table} AS e, entity_for as eg JOIN {self._table} as src ON src.pid = e.s
             WHERE e.o = eg.s {p_where}
         ) SELECT pid, s, p, o, n, depth, stype FROM entity_for {t_where};
         """
