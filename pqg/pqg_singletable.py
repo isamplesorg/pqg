@@ -124,7 +124,7 @@ class PQG:
         if _DBMS_ == sqlite3:
             self._default_timestamp = "(unixepoch())"
         self._connection = dbinstance
-        # Alway load the spatial extension
+        # Always load the spatial extension
         self._connection.execute("INSTALL spatial; LOAD spatial;")
         self.geometry_x_field = "longitude"
         self.geometry_y_field = "latitude"
@@ -216,10 +216,10 @@ class PQG:
                 return
             if meta[0] != __version__:
                 _L.warning("Version mismatch. PQG version = %s. Metadata version = %s", __version__, meta[0])
-            self._node_pk = meta[1]
-            self._types = json.loads(meta[2])
-            self._edgefields = meta[3]
-            self._literal_field_names = meta[4]
+            self._node_pk = meta[2]
+            self._types = json.loads(meta[3])
+            self._edgefields = meta[4]
+            self._literal_field_names = meta[5]
 
     def loadMetadataParquet(self):
         if not self._isparquet:
@@ -331,6 +331,7 @@ class PQG:
                 csr.execute(f"ALTER TABLE {self._table} ADD COLUMN {col};")
                 self._connection.commit()
 
+
     def nodeExists(self, pid:str)->typing.Optional[typing.Tuple[str, str]]:
         if pid in self._pidcache:
             return (pid, self._pidcache[pid])
@@ -399,6 +400,8 @@ class PQG:
         with self.getCursor() as csr:
             values = csr.execute(sql, [pid]).fetchone()
             return dict(zip(_fields, values))
+
+
 
     def addEdge(self, edge: Edge) -> str:
         """Adds an edge.
