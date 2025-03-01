@@ -16,7 +16,11 @@ import logging
 import duckdb
 
 LOGGER = logging.getLogger('sesarParquet')
-#generator = faker.Faker()
+SESAR_USER_LKUP = {}
+INIT_LKUP = {}
+COLLECTOR_LKUP = {}
+ARCHIVE_LKUP = {}
+LOCALITY_LKUP = {}
 
 # connect to database
 def get_2025Connection() -> psycopg2.extensions.connection:
@@ -486,9 +490,20 @@ def GetIdentifiedConcept(g, idin: str) -> IdentifiedConcept:
         return None
     return theconcept
 
-
-def get_Agent(g, thepid: str) -> Agent:
+def get_pid_by_altid(g, idin: str) -> IdentifiedConcept:
     try:
+        with g.getCursor() as crsr:
+            result = crsr.execute("select pid from node where '" + idin + "' in altids")
+            apid = result.fetchone()
+    except Exception as e:
+        LOGGER.debug(f'get identified concept error: {e}')
+        return None
+    return apid[0]
+
+
+def get_Agent(g, theid: str) -> Agent:
+    try:
+        thepid = get_pid_by_altid(g, theid)
         theagent = g.getNodeEntry(pid=thepid)
     except Exception as e:
         LOGGER.debug(f'get agent error: {e}')
@@ -496,7 +511,7 @@ def get_Agent(g, thepid: str) -> Agent:
     return theagent
 
 
-def get_SamplingEvent(g, theobj) -> SamplingEvent:
+def get_SamplingEvent(g, theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP) -> SamplingEvent:
     # description
     collectionDesc = ''
     if theobj['collection_method_id']:
@@ -509,7 +524,7 @@ def get_SamplingEvent(g, theobj) -> SamplingEvent:
     if theobj['platform_id']:
         theconcept = GetIdentifiedConcept(g, 'pla.' + str(theobj['platform_id']))
         if theconcept:
-            collectionDesc = collectionDesc + ' Platform: ' + theconcept[0]['label']
+            collectionDesc = collectionDesc + ' Platform: ' + theconcept['label']
     if theobj['launch_platform_id']:
         theconcept = GetIdentifiedConcept(g, 'pla.'+str(theobj['launch_platform_id']))
         if theconcept:
@@ -522,6 +537,14 @@ def get_SamplingEvent(g, theobj) -> SamplingEvent:
         theconcept = GetIdentifiedConcept(g, 'sft.'+str(theobj['sampled_feature_type_id']))
         hcc = theconcept['label']
     resp = None
+    thecollectors = []
+    try:
+        for collector in COLLECTOR_LKUP['sam.' + str(theobj['sample_id'])]:
+            thecollectors.append(get_Agent(g, collector))
+    except Exception as e:
+        print(f"no collector {theobj['sample_id']}.  {repr(e)}")
+
+
 
     thelocality = None
     try:
@@ -539,21 +562,37 @@ def get_SamplingEvent(g, theobj) -> SamplingEvent:
 
     theprj = None
     if theobj['cruise_field_prgrm_id'] is not None:
-        theprj = INIT_LKUP('ini.'+str(theobj['cruise_field_prgrm_id']))
+        theprj = INIT_LKUP['urn:local:ini.'+str(theobj['cruise_field_prgrm_id'])]
+
+    thelabel = None
+    if theprj:
+        if theobj['launch_label']:
+            thelabel = f"{theprj}, {theobj['launch_label']}"
+        else:
+            thelabel = theprj
+    else:
+        if theobj['name']:
+            thelabel = f"Collection of sample {theobj['name']}"
+        else:
+            thelabel = f"Collection of sample on "
+    if thetime:
+        if thelabel:
+            thelabel += "; " + thetime
 
     return SamplingEvent(
-        pid=f"urn:local:evt_{theobj['sample_id']}",
+        pid=f"urn:local:evt.{theobj['sample_id']}",
         description=collectionDesc,
         authorized_by=None,
         has_context_category=hcc,
         has_feature_of_interest=thelocality,
-        label=generator.word(),
+        label=thelabel,
         project=theprj,
-        responsibility=resp,
+        responsibility=thecollectors,
         result_time=thetime,
         sample_location=get_GeospatialCoordLocation(theobj),
         sampling_site=get_SamplingSite(g,theobj),
     )
+
 
 def get_SamplingSite(g,theobj) -> SamplingSite:
     thedesc = None
@@ -584,7 +623,7 @@ def get_SamplingSite(g,theobj) -> SamplingSite:
         pass
 
     return SamplingSite(
-        pid=f"urn:local:sst_{theobj['s              ample_id']}",
+        pid=f"urn:local:sst.{theobj['sample_id']}",
         description=thedesc,
         label=locname,
         place_name=theplaces,
@@ -592,9 +631,10 @@ def get_SamplingSite(g,theobj) -> SamplingSite:
         is_part_of=None,
     )
 
+
 def load_samples(newDb, g):
     tableName = 'sample'
-    selectRecordQuery = 'SELECT * FROM public.' + tableName + ' limit 5'
+    selectRecordQuery = 'SELECT * FROM public.' + tableName + ' limit 100000'
     LOGGER.debug(f"get_sample_data record query: {repr(selectRecordQuery)}")
     try:
         data = executeQuery(newDb, selectRecordQuery)
@@ -662,13 +702,6 @@ def load_samples(newDb, g):
         if len(thekeywords) == 0:
             thekeywords = None
 
-        thecollectors=[]
-        try:
-            for collector in COLLECTOR_LKUP['sam.'+str(theobj['sample_id'])]:
-                thecollectors.append(get_Agent(g,collector))
-        except Exception as e:
-            print(f"no collector {theobj['sample_id']}.  {repr(e)}")
-
 
         ms = MaterialSampleRecord(
             pid=f"sam.{str(theobj['sample_id'])}",
@@ -687,7 +720,7 @@ def load_samples(newDb, g):
             keywords=thekeywords,
             label=theobj['name'],
             last_modified_time=theobj['last_update_date'],
-            produced_by=get_SamplingEvent(g,theobj),
+            produced_by=get_SamplingEvent(g,theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP),
             registrant=theregistrant,
             related_resource=None,
             sample_identifier=theobj['igsn'],
@@ -706,8 +739,8 @@ def get_record(g, pid):
 
 def main(dest: str = None):
 
-    loadvocabs = True
-    loadtables = True
+    loadvocabs = False
+    loadtables = False
 
     sesarDb = get_2025Connection()
     if sesarDb:
