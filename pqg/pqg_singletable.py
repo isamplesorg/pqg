@@ -16,6 +16,7 @@ from pqg import __version__
 _DBMS_ = duckdb
 #_DBMS_ = sqlite3
 
+DEFAULT_PARQUET_GROUP_SIZE = 122880
 
 def getLogger():
     return logging.getLogger("pqg")
@@ -222,10 +223,10 @@ class PQG:
                 return
             if meta[0] != __version__:
                 _L.warning("Version mismatch. PQG version = %s. Metadata version = %s", __version__, meta[0])
-            self._node_pk = meta[1]
-            self._types = json.loads(meta[2])
-            self._edgefields = meta[3]
-            self._literal_field_names = meta[4]
+            self._node_pk = meta[2]
+            self._types = json.loads(meta[3])
+            self._edgefields = meta[4]
+            self._literal_field_names = meta[5]
 
     def loadMetadataParquet(self):
         if not self._isparquet:
@@ -258,7 +259,7 @@ class PQG:
         if self._isparquet:
             self.loadMetadataParquet()
         else:
-            self.loadMetadataSql
+            self.loadMetadataSql()
 
     def initialize(self, classes:typing.List[pqg.common.IsDataclass]):
         """
@@ -583,7 +584,7 @@ class PQG:
 
     def objectCounts(self)->typing.Iterator[typing.Tuple[str, int]]:
         with self.getCursor() as csr:
-            result = csr.execute(f"SELECT otype, count(*) AS n FROM {self._table} WHERE otype !='_edge_' GROUP BY otype")
+            result = csr.execute(f"SELECT otype, count(*) AS n FROM {self._table} GROUP BY otype")
             while row := result.fetchone():
                 yield row[0], row[1]
 
@@ -635,8 +636,10 @@ class PQG:
         dest.append("}")
         return dest
 
-    def asParquet(self, dest_base_name: pathlib.Path):
+    def asParquet(self, dest_base_name: pathlib.Path, group_size:int=DEFAULT_PARQUET_GROUP_SIZE):
         _L = getLogger()
+        if group_size < 2048:
+            group_size = 2048
         node_dest = dest_base_name.parent/f"{dest_base_name.stem}.parquet"
         # COPY (SELECT * FROM ps ORDER BY 
         #   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))
@@ -645,7 +648,7 @@ class PQG:
         # This will have a performance hit on write, but should both decrease file size and
         # significantly improve performance of reads in a spatial context
         with self.getCursor() as csr:
-            sql = f"COPY (SELECT * FROM {self._table} ORDER BY ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))))"
+            sql = f"COPY (SELECT * FROM {self._table} ORDER BY otype, pid, ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))))"
             #sql = f"COPY (SELECT * FROM {self._table})"
             sql += f" TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
             sql += "{" 
@@ -654,7 +657,8 @@ class PQG:
             sql += f"pqg_node_types:'{json.dumps(self._types)}', "
             sql += f"pqg_edge_fields:'{json.dumps(self._edgefields)}', "
             sql += f"pqg_literal_fields:'{json.dumps(self._literal_field_names)}'" 
-            sql += "});"
+            sql += "}"
+            sql += f", ROW_GROUP_SIZE {group_size});"
             print(sql)
             csr.execute(sql)
 
