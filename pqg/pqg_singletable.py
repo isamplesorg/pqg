@@ -752,8 +752,6 @@ class PQG:
             result = csr.execute(sql, params)
             while row := result.fetchone():
                 yield row
-                row = result.fetchone()
-
 
 
     def objectsAtPath(self, path:typing.List[str])->typing.Iterator[str]:

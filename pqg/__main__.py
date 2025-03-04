@@ -74,7 +74,7 @@ def tree(ctx, store, pid:str):
     graph = pqg.PQG(ctx.obj['dbinstance'], store)
     graph.loadMetadata()
     for entry in graph.breadthFirstTraversal(pid):
-        print(f"{entry}")
+        print(json.dumps(entry))
 
 
 @cli.command("types")
