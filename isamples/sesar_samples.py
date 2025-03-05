@@ -7,10 +7,10 @@ Modified for SESAR by SM Richard 2025-02-28
 
 import json
 import pathlib
-import typing
-import pqg
+# import typing
+# import pqg
 from isamples import *
-import faker
+import time
 import psycopg2
 import logging
 import duckdb
@@ -22,8 +22,9 @@ COLLECTOR_LKUP = {}
 ARCHIVE_LKUP = {}
 LOCALITY_LKUP = {}
 
+
 # connect to database
-def get_2025Connection() -> psycopg2.extensions.connection:
+def get_2025Connection() -> psycopg2.extensions.connection | None:
     try:
         return psycopg2.connect(
             database="SESAR2025",
@@ -76,7 +77,7 @@ TABLES = ['affiliation',
           'sample_material',
           'sample_publication_url',
           'sample_type',
-          'sampled_feature_type',       # populate has_context_category
+          'sampled_feature_type',  # populate has_context_category
           'sampling_method',
           'sesar_spatial_ref_sys',
           'sesar_user'
@@ -109,9 +110,8 @@ def getFields(conn, tableName):
     return fieldlist
 
 
-
-
-def load_vocab_table(newDb, g, args:list):
+def load_vocab_table(g, args: list, concept_lkup):
+    start_time = time.time()  # time the function execution
     # args list order:
     # tableName,abbrev,urifield,labelfield,schemename,schemeurifield,idfield
     tableName = args[0]
@@ -122,7 +122,6 @@ def load_vocab_table(newDb, g, args:list):
         thedata = executeQuery(newDb, selectRecordQuery)
     except Exception as e:
         LOGGER.info(f'{tableName} data query failed. {e}')
-        return 0
     thefields = getFields(newDb, tableName)
     for row in thedata:
         theobj = {}
@@ -142,43 +141,44 @@ def load_vocab_table(newDb, g, args:list):
         else:
             theschemeuri = ''
 
-        # theConcept = IdentifiedConcept(
-        #     pid=thepid,
-        #     label=theobj[args[3]],
-        #     scheme_name=args[4],
-        #     scheme_uri=theschemeuri,
-        #     altids=[f"{abbrev}.{str(theobj[args[6]])}"]
-        # )
-       # g.addNode(theConcept)
-        sdata = {}
-        sdata['pid'] = thepid
-        sdata['label'] = theobj[args[3]],
-        sdata['scheme_name'] = args[4],
-        sdata['scheme_uri'] = theschemeuri,
-        sdata['altids'] = [f"{abbrev}.{str(theobj[args[6]])}"]
-        otype = 'IdentifiedConcept'
-        s_pid = g.addNodeEntry(otype, sdata)
+        theid = f"{abbrev}.{str(theobj[args[6]])}"
+
+        theConcept = IdentifiedConcept(
+            pid=thepid,
+            label=theobj[args[3]],
+            scheme_name=args[4],
+            scheme_uri=theschemeuri,
+            altids=[theid]
+        )
+
+        concept_lkup[theid] = theConcept
+
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load vocabs {tableName} execution time: {execution_time} seconds")
     return 1
 
 
-def load_material_type(newDb, g):
+def load_material_type(g,concept_lkup):
+    start_time = time.time()  # time the function execution
     tableName = 'material_type'
-    abbrev='mat'
+    abbrev = 'mat'
     fieldlist = ['material_type.material_type_id', 'material_type.label',
-                'scheme_uri', 'material_type_uri']
+                 'scheme_uri', 'material_type_uri']
     qfields = ','.join(fieldlist)
     selectRecordQuery = 'SELECT ' + qfields + \
-        ' FROM material_type join sample on material_type_id = general_material_type_id ' + \
-        ' union SELECT ' + qfields + \
-        ' FROM material_type join sample_material on material_type.material_type_id = sample_material.material_type_id;'
+                        ' FROM material_type join sample on material_type_id = general_material_type_id ' + \
+                        ' union SELECT ' + qfields + \
+                        ' FROM material_type join sample_material on material_type.material_type_id = ' + \
+                        ' sample_material.material_type_id;'
 
     LOGGER.debug(f"get_sample_data record query: {repr(selectRecordQuery)}")
     try:
         mat_data = executeQuery(newDb, selectRecordQuery)
-    except:
-        LOGGER.info('get_sample_data data query failed')
+    except Exception as e:
+        LOGGER.info(f'get {tableName} data query failed, error: {repr(e)}')
         return None
- #   thefields = getFields(newDb, tableName)
+    #   thefields = getFields(newDb, tableName)
     for row in mat_data:
         theobj = {}
         for nc in range(len(row)):
@@ -189,18 +189,22 @@ def load_material_type(newDb, g):
                 theobj[fieldlist[nc]] = row[nc]
         theConcept = IdentifiedConcept(
             pid=theobj['material_type_uri'],
-    #        pid=f"{tableName[4:]}.{str(id)}",
+            #        pid=f"{tableName[4:]}.{str(id)}",
             label=theobj['material_type.label'],
             scheme_name="SESAR Material Type",
             scheme_uri=theobj['scheme_uri'],
             altids=[f"{abbrev}.{str(theobj['material_type.material_type_id'])}"]
         )
-        g.addNode(theConcept)
-
+#        g.addNode(theConcept)
+        concept_lkup[abbrev + '.' + str(theobj['material_type.material_type_id'])] = theConcept
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load material_types execution time: {execution_time} seconds")
     return 1
 
 
-def load_individuals(newDb, g):
+def load_individuals(g,agent_lkup):
+    start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
     tableName = 'individual'
     abbrev = 'ind'
@@ -208,8 +212,8 @@ def load_individuals(newDb, g):
     LOGGER.debug(f"individuals record query: {repr(selectRecordQuery)}")
     try:
         indiv_data = executeQuery(newDb, selectRecordQuery)
-    except:
-        LOGGER.info('get_sample_data data query failed')
+    except Exception as e:
+        LOGGER.info(f'load {tableName} data query failed, with error: {repr(e)}')
         return None
     thefields = getFields(newDb, tableName)
     for row in indiv_data:
@@ -220,9 +224,9 @@ def load_individuals(newDb, g):
             else:
                 theobj[thefields[nc]] = None
 
-        if theobj['label']:
+        if theobj['label'] is not None:
             thelabel = theobj['label']
-        elif theobj['individual_uri']:
+        elif theobj['individual_uri'] is not None:
             thelabel = theobj['individual_uri']
         elif theobj['description'] is not None:
             thelabel = theobj['description']
@@ -231,19 +235,19 @@ def load_individuals(newDb, g):
         else:
             continue  # no label, skip
 
-        if theobj['individual_uri']:
+        if theobj['individual_uri'] is not None:
             thepid = theobj['individual_uri']
         else:
             thepid = 'urn:local:' + f"{abbrev}.{str(theobj['individual_id'])}"
 
         contactinfo = ''
-        if theobj['address']:
+        if theobj['address'] is not None:
             contactinfo = theobj['address']
-        if theobj['email']:
+        if theobj['email'] is not None:
             if len(contactinfo) > 0:
                 contactinfo += ", "
             contactinfo += theobj['email']
-        if theobj['phone']:
+        if theobj['phone'] is not None:
             if len(contactinfo) > 0:
                 contactinfo += ", Phone:"
             contactinfo += theobj['phone']
@@ -256,11 +260,95 @@ def load_individuals(newDb, g):
             role='',
             altids=[f"{abbrev}.{str(theobj['individual_id'])}"]
         )
-        g.addNode(theagent)
+#        g.addNode(theagent)
+        agent_lkup[abbrev + '.' + str(theobj['individual_id'])] = theagent
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load indivduals execution time: {execution_time} seconds")
     return 1
 
 
-def load_locality_lkup(newDb):
+def load_related_resource_lkup():
+    start_time = time.time()  # time the function execution
+    # related resource are loaded into Sample_Relation nodes
+    tableName = 'related_resource'
+    abbrev = 'rel'
+    selectRecordQuery = 'SELECT * FROM public.' + tableName
+    LOGGER.debug(f"{tableName} record query: {repr(selectRecordQuery)}")
+    try:
+        idata = executeQuery(newDb, selectRecordQuery)
+    except Exception as e:
+        LOGGER.info('get_sample_data data query failed with error: %s', e)
+        return None
+    thefields = getFields(newDb, tableName)
+    rel_lookup = {}  # dictionary in which key is sample_id, value is list of
+    #  sample relation objects with links for whic the sample
+    #  is the subject
+    for row in idata:
+        theobj = {}
+        for nc in range(len(row)):
+            if row[nc]:
+                theobj[thefields[nc]] = row[nc]
+            else:
+                theobj[thefields[nc]] = None
+        if theobj['sample_id'] is not None:  # skip if no relationships from the sample
+            try:
+                thesamplerel = SampleRelation(
+                    pid=f"rel.{str(theobj['relation_id'])}",
+                    target=theobj['related_resource_uri'],
+                    description='',
+                    label="child of " + str(theobj['related_resource_uri']),
+                    relationship='has parent material sample'
+                )
+                try:
+                    rel_lookup[str(theobj['sample_id'])].append(thesamplerel)
+                except:
+                    rel_lookup[str(theobj['sample_id'])] = []
+                    rel_lookup[str(theobj['sample_id'])].append(thesamplerel)
+            except Exception as e:
+                LOGGER.debug(f'get SampleRelation error: {e}')
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load related resources lkup execution time: {execution_time} seconds")
+    return rel_lookup
+
+
+def load_additional_name_lkup():
+    start_time = time.time()  # time the function execution
+    # related resource are loaded into Sample_Relation nodes
+    tableName = 'sample_additional_name'
+    abbrev = 'san'
+    selectRecordQuery = 'SELECT * FROM public.' + tableName
+    LOGGER.debug(f"{tableName} record query: {repr(selectRecordQuery)}")
+    try:
+        idata = executeQuery(newDb, selectRecordQuery)
+    except:
+        LOGGER.info(f'load {tableName} data query failed')
+        return None
+    thefields = getFields(newDb, tableName)
+    add_name_lookup = {}  # dictionary in which key is sample_id, value is list of
+    #  additional name strings
+    for row in idata:
+        theobj = {}
+        for nc in range(len(row)):
+            if row[nc]:
+                theobj[thefields[nc]] = row[nc]
+            else:
+                theobj[thefields[nc]] = None
+        if theobj['sample_id'] is not None:
+            try:
+                add_name_lookup[str(theobj['sample_id'])].append(theobj['name'])
+            except:
+                add_name_lookup[str(theobj['sample_id'])] = []
+                add_name_lookup[str(theobj['sample_id'])].append(theobj['name'])
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load additional name execution time: {execution_time} seconds")
+    return add_name_lookup
+
+
+def load_locality_lkup():
+    start_time = time.time()  # time the function execution
     tableName = 'locality'
     abbrev = 'loc'
     selectRecordQuery = 'SELECT * FROM public.' + tableName
@@ -280,12 +368,14 @@ def load_locality_lkup(newDb):
             else:
                 theobj[thefields[nc]] = None
         locality_lookup[abbrev + '.' + str(theobj['locality_id'])] = theobj
-
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load locality_lkup execution time: {execution_time} seconds")
     return locality_lookup
 
 
-
-def load_institution(newDb, g):
+def load_institution(g,agent_lkup):
+    start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
     tableName = 'institution'
     abbrev = 'ins'
@@ -305,21 +395,21 @@ def load_institution(newDb, g):
             else:
                 theobj[thefields[nc]] = None
 
-        if theobj['label']:
+        if theobj['label'] is not None:
             thelabel = theobj['label']
         elif theobj['description'] is not None:
             thelabel = theobj['description']
         elif theobj['email'] is not None:
             thelabel = theobj['email']
         else:
-            continue  #no label, skip
+            continue  # no label, skip
 
         thepid = 'urn:local:' + f"{abbrev}.{str(theobj['institution_id'])}"
 
         contactinfo = ''
-        if theobj['address']:
+        if theobj['address'] is not None:
             contactinfo = theobj['address']
-        if theobj['email']:
+        if theobj['email'] is not None:
             if len(contactinfo) > 0:
                 contactinfo += ", "
             contactinfo += theobj['email']
@@ -332,15 +422,20 @@ def load_institution(newDb, g):
             role='',
             altids=[f"{abbrev}.{str(theobj['institution_id'])}"]
         )
-        g.addNode(theagent)
+#        g.addNode(theagent)
+        agent_lkup[abbrev + '.' + str(theobj['institution_id'])] = theagent
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load institution to Agent execution time: {execution_time} seconds")
     return 1
 
 
-def load_collector_lkup(newDb) -> dict:
+def load_collector_lkup() -> dict | None:
+    start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
     tableName = 'related_sample_agent'
     selectRecordQuery = "SELECT * FROM related_sample_agent where " + \
-                        " relation_type_id = 1 ORDER BY sample_id ASC"
+                        " relation_type_id = 1 ORDER BY sample_id"
     LOGGER.debug(f"related_sample_agent collector record query: {repr(selectRecordQuery)}")
     try:
         idata = executeQuery(newDb, selectRecordQuery)
@@ -356,23 +451,28 @@ def load_collector_lkup(newDb) -> dict:
                 theobj[thefields[nc]] = row[nc]
             else:
                 theobj[thefields[nc]] = None
-        thekey = 'sam.' + str(theobj['sample_id'])
+        thekey = "sam." + str(theobj['sample_id'])
+        theval = ''
         if theobj['agent_type'] == 'Individual':
-            theval = 'ind.'+ str(theobj['individual_id'])
+            theval = 'ind.' + str(theobj['individual_id'])
         if theobj['agent_type'] == 'Institution':
             theval = 'ins.' + str(theobj['institution_id'])
         try:
             collectorlkup[thekey].append(theval)
         except:
-            collectorlkup[thekey] = [theval]
+            collectorlkup[thekey] = []
+            collectorlkup[thekey].append(theval)
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load collector_lkup execution time: {execution_time} seconds")
     return collectorlkup
 
 
-def load_archive_lkup(newDb) -> dict:
-    # individuals are loaded into Agent nodes
+def load_archive_lkup() -> dict | None:
+    start_time = time.time()  # time the function execution
     tableName = 'related_sample_agent'
     selectRecordQuery = "SELECT * FROM related_sample_agent where " + \
-                        " relation_type_id = 3 ORDER BY sample_id ASC"
+                        " relation_type_id = 3 ORDER BY sample_id"
     LOGGER.debug(f"related_sample_agent archive record query: {repr(selectRecordQuery)}")
     try:
         idata = executeQuery(newDb, selectRecordQuery)
@@ -392,16 +492,18 @@ def load_archive_lkup(newDb) -> dict:
         theind = None
         theins = None
         if theobj['agent_type'] == 'Individual':
-            theind = 'ind.'+ str(theobj['individual_id'])
+            theind = 'ind.' + str(theobj['individual_id'])
         if theobj['agent_type'] == 'Institution':
             theins = 'ins.' + str(theobj['institution_id'])
         archivelkup[thekey] = [theind, theins]
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load archive_lkup execution time: {execution_time} seconds")
     return archivelkup
 
 
-
-def load_initiative_lkup(newDb):
-    # individuals are loaded into Agent nodes
+def load_initiative_lkup():
+    start_time = time.time()  # time the function execution
     tableName = 'initiative'
     abbrev = 'ini'
     selectRecordQuery = 'SELECT * FROM public.' + tableName
@@ -421,34 +523,36 @@ def load_initiative_lkup(newDb):
             else:
                 theobj[thefields[nc]] = None
         thelabel = ''
-        if theobj['label']:
+        if theobj['label'] is not None:
             thelabel = theobj['label']
         if len(thelabel) > 0:
             thelabel += '; '
         if theobj['initiative_uri'] is not None:
-                thelabel += 'URI--'+theobj['initiative_uri'] + '. '
-        if theobj['description']:
+            thelabel += 'URI--' + theobj['initiative_uri'] + '. '
+        if theobj['description'] is not None:
             thelabel += theobj['description'] + '. '
         if theobj['funding'] is not None:
-            label += 'Funding--' + theobj['initiative_uri']
+            thelabel += 'Funding--' + theobj['initiative_uri']
 
         thepid = 'urn:local:' + f"{abbrev}.{str(theobj['initiative_id'])}"
         initiativelkup[thepid] = thelabel
-
+    end_time = time.time()
+    execution_time = end_time - start_time
+    LOGGER.info(f"load initiative lkup execution time: {execution_time} seconds")
     return initiativelkup
 
 
-def load_sesar_user_lkup(newDb) -> dict:
+def load_sesar_user_lkup() -> dict | None:
     tableName = 'sesar_user'
     selectRecordQuery = 'SELECT * FROM public.' + tableName
     LOGGER.debug(f"{tableName} record query: {repr(selectRecordQuery)}")
     try:
         sdata = executeQuery(newDb, selectRecordQuery)
-    except:
-        LOGGER.info(f'{tableName} data query failed')
+    except Exception as e:
+        LOGGER.info(f'{tableName} data query failed, error: {repr(e)}')
         return None
     thefields = getFields(newDb, tableName)
-    sesaruserlkup={}
+    sesaruserlkup = {}
     for row in sdata:
         theobj = {}
         for nc in range(len(row)):
@@ -456,41 +560,74 @@ def load_sesar_user_lkup(newDb) -> dict:
                 theobj[thefields[nc]] = row[nc]
             else:
                 theobj[thefields[nc]] = None
-        if theobj['individual_id']:
+        if theobj['individual_id'] is not None:
             sesaruserlkup[str(theobj['sesar_user'])] = 'ind.' + str(theobj['individual_id'])
-        elif theobj['institution_id']:
+        elif theobj['institution_id'] is not None:
             sesaruserlkup[str(theobj['sesar_user'])] = 'ind.' + str(theobj['institution_id'])
     return sesaruserlkup
 
-def get_GeospatialCoordLocation(theobj) -> GeospatialCoordLocation:
+
+def get_GeospatialCoordLocation(theobj, concept_lkup) -> GeospatialCoordLocation | None:
     lat = theobj['latitude']
     long = theobj['longitude']
     elev = theobj['elevation']
+    depth_min = theobj['depth_min']
+    depth_max = theobj['depth_max']
 
-    if lat == None and long == None and elev == None:
+    verticalpos = ''
+    if (lat is None and long is None and elev is None and
+            depth_min is None and depth_max is None):
         return None
     else:
+        if ((elev is not None) or (depth_min is not None)
+                or (depth_max is not None)):
+            verticalpos = ""
+            if elev:
+                verticalpos = verticalpos + str(elev)
+            if theobj['elevation_uom'] is not None:
+                verticalpos = verticalpos + " UOM: " + theobj['elevation_uom']
+
+            if depth_min is not None or depth_max is not None:
+                if depth_min == depth_max:
+                    verticalpos = " Depth: " + str(depth_min)
+                elif depth_min and depth_max:
+                    verticalpos = verticalpos + "Depth range: " + str(depth_min) + " to " + str(depth_max)
+                elif depth_min:
+                    verticalpos = verticalpos + "Depth minimum: " + str(depth_min)
+                elif depth_max:
+                    verticalpos = verticalpos + "Depth maximum: " + str(depth_min)
+            if theobj['depth_uom'] is not None:
+                verticalpos = verticalpos + " UOM: " + theobj['depth_uom']
+            if theobj['depth_spatial_ref_id'] is not None:
+                #                theconcept = get_altid_identifiedconcept(g, 'ssr.' + str(theobj['depth_spatial_ref_id']))
+                try:
+                    theconcept = concept_lkup['ssr.' + str(theobj['depth_spatial_ref_id'])]
+                    verticalpos = verticalpos + " Datum: " + theconcept['label']
+                except Exception as e:
+                    verticalpos = verticalpos + " Datum: " + str(theobj['depth_spatial_ref_id'])
+
         return GeospatialCoordLocation(
             pid=f"urn:local:geo.{str(theobj['sample_id'])}",
             latitude=lat,
             longitude=long,
-            #obfuscated=generator.boolean(0.1),
-            elevation=elev
+            # obfuscated=generator.boolean(0.1),
+            elevation=verticalpos
         )
 
 
-def GetIdentifiedConcept(g, idin: str) -> IdentifiedConcept:
+def get_altid_identifiedconcept(g, idin: str) -> IdentifiedConcept | None:
     try:
         with g.getCursor() as crsr:
             result = crsr.execute("select pid from node where '" + idin + "' in altids")
             apid = result.fetchone()
-        theconcept = g.getNodeEntry(pid=apid[0])
+            theconcept = g.getNodeEntry(pid=apid[0])
     except Exception as e:
         LOGGER.debug(f'get identified concept error: {e}')
         return None
     return theconcept
 
-def get_pid_by_altid(g, idin: str) -> IdentifiedConcept:
+
+def get_pid_by_altid(g, idin: str) -> str | None:
     try:
         with g.getCursor() as crsr:
             result = crsr.execute("select pid from node where '" + idin + "' in altids")
@@ -498,10 +635,10 @@ def get_pid_by_altid(g, idin: str) -> IdentifiedConcept:
     except Exception as e:
         LOGGER.debug(f'get identified concept error: {e}')
         return None
-    return apid[0]
+    return str(apid[0])
 
 
-def get_Agent(g, theid: str) -> Agent:
+def get_Agent(g, theid: str) -> Agent | None:
     try:
         thepid = get_pid_by_altid(g, theid)
         theagent = g.getNodeEntry(pid=thepid)
@@ -511,40 +648,47 @@ def get_Agent(g, theid: str) -> Agent:
     return theagent
 
 
-def get_SamplingEvent(g, theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP) -> SamplingEvent:
+def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, concept_lkup, agent_lkup) -> SamplingEvent:
     # description
+    start_time = time.time()  # time the function execution
     collectionDesc = ''
-    if theobj['collection_method_id']:
-        theconcept = GetIdentifiedConcept(g, 'sam.'+str(theobj['collection_method_id'])),
-        collectionDesc = collectionDesc + 'method:' + theconcept[0]['label']
-    if theobj['collection_method_detail']:
+    if theobj['collection_method_id'] is not None:
+        #        theconcept = get_altid_identifiedconcept(g, 'sam.' + str(theobj['collection_method_id']))
+        theconcept = concept_lkup['sam.' + str(theobj['collection_method_id'])]
+        #        test = concept_lkup['sam.' + str(theobj['collection_method_id'])]
+        collectionDesc = collectionDesc + 'method:' + theconcept['label']
+    if theobj['collection_method_detail'] is not None:
         if len(collectionDesc) > 0:
             collectionDesc += ', '
         collectionDesc += theobj['collection_method_detail'] + '. '
-    if theobj['platform_id']:
-        theconcept = GetIdentifiedConcept(g, 'pla.' + str(theobj['platform_id']))
+    if theobj['platform_id'] is not None:
+        #        theconcept = get_altid_identifiedconcept(g, 'pla.' + str(theobj['platform_id']))
+        theconcept = concept_lkup['pla.' + str(theobj['platform_id'])]
+        #        test = concept_lkup['pla.' + str(theobj['platform_id'])]
         if theconcept:
             collectionDesc = collectionDesc + ' Platform: ' + theconcept['label']
-    if theobj['launch_platform_id']:
-        theconcept = GetIdentifiedConcept(g, 'pla.'+str(theobj['launch_platform_id']))
+    if theobj['launch_platform_id'] is not None:
+        #        theconcept = get_altid_identifiedconcept(g, 'pla.' + str(theobj['launch_platform_id']))
+        theconcept = concept_lkup['pla.' + str(theobj['launch_platform_id'])]
         if theconcept:
-            collectionDesc = collectionDesc + ' Launch Platform: ' + theconcept[0]['label']
-    if theobj['launch_label']:
+            collectionDesc = collectionDesc + ' Launch Platform: ' + theconcept['label']
+    if theobj['launch_label'] is not None:
         collectionDesc = collectionDesc + ' Launch: ' + theobj['launch_label']
 
     hcc = None
     if theobj['sampled_feature_type_id'] is not None:
-        theconcept = GetIdentifiedConcept(g, 'sft.'+str(theobj['sampled_feature_type_id']))
+        #        theconcept = get_altid_identifiedconcept(g, 'sft.' + str(theobj['sampled_feature_type_id']))
+        theconcept = concept_lkup['sft.' + str(theobj['sampled_feature_type_id'])]
         hcc = theconcept['label']
-    resp = None
+    #    resp = None
     thecollectors = []
     try:
         for collector in COLLECTOR_LKUP['sam.' + str(theobj['sample_id'])]:
-            thecollectors.append(get_Agent(g, collector))
+#            thecollectors.append(get_Agent(g, collector))
+            thecollectors.append(agent_lkup[collector])
+#            test = agent_lkup[collector]
     except Exception as e:
-        print(f"no collector {theobj['sample_id']}.  {repr(e)}")
-
-
+        LOGGER.debug(f"no collector {theobj['sample_id']}.  {repr(e)}")
 
     thelocality = None
     try:
@@ -555,30 +699,32 @@ def get_SamplingEvent(g, theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP) -> Sampl
     thetime = None
     if (theobj['collection_start_date'] is not None) and (theobj['collection_end_date'] is not None):
         thetime = f"{theobj['collection_start_date']}/{theobj['collection_end_date']}"
-    elif theobj['collection_start_date']:
+    elif theobj['collection_start_date'] is not None:
         thetime = f"{theobj['collection_start_date']}"
-    elif theobj['collection_end_date']:
+    elif theobj['collection_end_date'] is not None:
         thetime = f"{theobj['collection_end_date']}"
 
     theprj = None
     if theobj['cruise_field_prgrm_id'] is not None:
-        theprj = INIT_LKUP['urn:local:ini.'+str(theobj['cruise_field_prgrm_id'])]
+        theprj = INIT_LKUP['urn:local:ini.' + str(theobj['cruise_field_prgrm_id'])]
 
     thelabel = None
     if theprj:
-        if theobj['launch_label']:
+        if theobj['launch_label'] is not None:
             thelabel = f"{theprj}, {theobj['launch_label']}"
         else:
             thelabel = theprj
     else:
-        if theobj['name']:
+        if theobj['name'] is not None:
             thelabel = f"Collection of sample {theobj['name']}"
         else:
             thelabel = f"Collection of sample on "
     if thetime:
         if thelabel:
             thelabel += "; " + thetime
-
+    end_time = time.time()
+    execution_time = end_time - start_time
+    # LOGGER.info(f"load_vocab execution time: {execution_time} seconds")
     return SamplingEvent(
         pid=f"urn:local:evt.{theobj['sample_id']}",
         description=collectionDesc,
@@ -589,16 +735,17 @@ def get_SamplingEvent(g, theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP) -> Sampl
         project=theprj,
         responsibility=thecollectors,
         result_time=thetime,
-        sample_location=get_GeospatialCoordLocation(theobj),
-        sampling_site=get_SamplingSite(g,theobj),
+        sample_location=get_GeospatialCoordLocation(theobj, concept_lkup),
+        sampling_site=get_SamplingSite(theobj, LOCALITY_LKUP, concept_lkup),
     )
 
 
-def get_SamplingSite(g,theobj) -> SamplingSite:
+def get_SamplingSite(theobj, LOCALITY_LKUP, concept_lkup) -> SamplingSite:
+    start_time = time.time()  # time the function execution
     thedesc = None
     if theobj['locality_detail'] is not None:
         thedesc = theobj['locality_detail']
-    if theobj['latitude_end']:
+    if theobj['latitude_end'] is not None:
         if len(thedesc) > 0:
             thedesc += ". "
         thedesc += f"Sampling from lat, long {theobj['latitude']}, {theobj['longitude']} to {theobj['latitude_end']}, {theobj['longitude_end']}"
@@ -609,19 +756,23 @@ def get_SamplingSite(g,theobj) -> SamplingSite:
     theplaces = []
     locname = None
     try:
-        thelocality = LOCALITY_LKUP(str(theobj['locality_id']))
-        placelist = ['province','county','city']
+        thelocality = LOCALITY_LKUP['loc.' + str(theobj['locality_id'])]
+        placelist = ['province', 'county', 'city']
         for item in placelist:
             if thelocality[item]:
                 theplaces.append(thelocality[item])
-        if thelocality['country_id']:
-            theconcept = GetIdentifiedConcept(g,thelocality['country_id'])
+        if thelocality['country_id'] is not None:
+            #            theconcept = get_altid_identifiedconcept(g, 'cty.'+ str(thelocality['country_id']))
+            theconcept = concept_lkup['cty.' + str(thelocality['country_id'])]
+            #            test = concept_lkup['cty.'+ str(thelocality['country_id'])]
             theplaces.append(theconcept['label'])
-        if thelocality['name']:
+        if thelocality['name'] is not None:
             locname = thelocality['name']
     except:
         pass
-
+    end_time = time.time()
+    execution_time = end_time - start_time
+    # LOGGER.info(f"get sampling_site execution time: {execution_time} seconds")
     return SamplingSite(
         pid=f"urn:local:sst.{theobj['sample_id']}",
         description=thedesc,
@@ -632,102 +783,260 @@ def get_SamplingSite(g,theobj) -> SamplingSite:
     )
 
 
-def load_samples(newDb, g):
-    tableName = 'sample'
-    selectRecordQuery = 'SELECT * FROM public.' + tableName + ' limit 100000'
-    LOGGER.debug(f"get_sample_data record query: {repr(selectRecordQuery)}")
+def get_MaterialSampleCuration(g, theobj, SESAR_USER_LKUP, agent_lkup) -> MaterialSampleCuration | None:
+    start_time = time.time()  # time the function execution
+    theowner = None
     try:
-        data = executeQuery(newDb, selectRecordQuery)
-    except:
-        LOGGER.info('get_sample_data data query failed')
-        return
-    SESAR_USER_LKUP = load_sesar_user_lkup(newDb)
+        thepid = SESAR_USER_LKUP[str(theobj['cur_owner_id'])]
+#        theowner = get_Agent(g, thepid)
+        theowner = agent_lkup[thepid]
+#        test = agent_lkup[thepid]
+        matsamcur = MaterialSampleCuration(
+            pid='urn:local:cur.' + str(theobj['sample_id']),
+            responsibility=theowner,
+            label=theowner.name,
+            description='current owner',
+            access_constraints=[]
+        )
+        end_time = time.time()
+        execution_time = end_time - start_time
+        LOGGER.debug(f"get MaterialSampleCuration execution time: {execution_time} seconds")
+        return matsamcur
+    except Exception as e:
+        LOGGER.info(f"Sample Curation; No owner; Exception: {repr(e)}")
+        return None
+
+
+def load_samples(g, concept_lkup, agent_lkup):
+    start_time = time.time()  # time the function execution
+    tableName = 'sample'
+    batchsize = 100000
+    # selectRecordQuery = 'SELECT * FROM public.' + tableName + ' order by sample_id  limit ' + str(batchsize)
+    # LOGGER.debug(f"get_sample_data record query: {repr(selectRecordQuery)}")
+    # try:
+    #     data = executeQuery(newDb, selectRecordQuery)
+    # except:
+    #     LOGGER.info('get_sample_data data query failed')
+    #     return
+
+    SESAR_USER_LKUP = load_sesar_user_lkup()
     if SESAR_USER_LKUP:
         print(f'SESAR_USER_LKUP loaded')
     else:
         print(f'SESAR_USER_LKUP fail !!!!!!')
-    INIT_LKUP = load_initiative_lkup(newDb)
+    INIT_LKUP = load_initiative_lkup()
     if INIT_LKUP:
         print(f'INIT_LKUP loaded ')
     else:
         print(f'INIT_LKUP fail !!!!!!')
-    COLLECTOR_LKUP = load_collector_lkup(newDb)
+    COLLECTOR_LKUP = load_collector_lkup()
     if COLLECTOR_LKUP:
         print(f'COLLECTOR_LKUP loaded ')
     else:
         print(f'COLLECTOR_LKUP fail !!!!!!')
-    ARCHIVE_LKUP = load_archive_lkup(newDb)
+    ARCHIVE_LKUP = load_archive_lkup()
     if ARCHIVE_LKUP:
         print(f'ARCHIVE_LKUP loaded ')
     else:
         print(f'ARCHIVE_LKUP fail !!!!!!')
-    LOCALITY_LKUP = load_locality_lkup(newDb)
+    LOCALITY_LKUP = load_locality_lkup()
     if LOCALITY_LKUP:
         print(f'LOCALITY_LKUP loaded ')
     else:
         print(f'LOCALITY_LKUP fail !!!!!!')
 
+    addName_lkup = load_additional_name_lkup()
+    if addName_lkup:
+        print(f'addName_lkup loaded ')
+    else:
+        print(f'addName_lkup fail !!!!!!')
+
+    relres_lkup = load_related_resource_lkup()
+    if relres_lkup:
+        print(f'relres_lkup loaded ')
+    else:
+        print(f'relres_lkup fail !!!!!!')
+    end_time = time.time()
+    execution_time = (end_time - start_time)
+    LOGGER.info(f"load lookups for sample loop execution time: {execution_time} seconds")
     thefields = getFields(newDb, tableName)
 
-    for row in data:
-        theobj = {}
-        for nc in range(len(row)):
-            if row[nc] is None:
-                theobj[thefields[nc]] = None
-                # replace null values with 'blank'
-            else:
+    maxIDQuery = "SELECT max(sample_id) FROM public.sample"
+    try:
+        result = executeQuery(newDb, maxIDQuery)
+        sample_max_id = result[0][0]
+    except:
+         sample_max_id = 0
+
+    max_id = 0  # starting value
+
+    while True:
+        selectRecordQuery = 'SELECT * FROM public.' + tableName + ' where sample_id > ' + str(max_id) + \
+                            '  order by sample_id ' + \
+                            '  LIMIT ' + str(batchsize) + ';'
+        LOGGER.debug("get_sample_data record query: ", repr(selectRecordQuery))
+        try:
+            data = executeQuery(newDb, selectRecordQuery)
+        except:
+            LOGGER.info('get_sample_data data query failed')
+            break
+
+        selectMaxQuery = "SELECT max(subset.sample_id) FROM (select * from public." + tableName + \
+                         " where sample_id > " + str(max_id) + \
+                         "  order by sample_id " + \
+                         "  LIMIT " + str(batchsize) + ") as subset;"
+        LOGGER.debug("get_sample_data max sample_id query: ", repr(selectMaxQuery))
+        try:
+            result = executeQuery(newDb, selectMaxQuery)
+            max_id = result[0][0]
+        except:
+            LOGGER.info('get_max sample ID failed')
+            break
+        LOGGER.debug(f'got sample data, start at max_id {max_id}')
+
+        therow = 0
+        rept_time = end_time
+        for row in data:
+            loopstart_time = time.time()
+            theobj = {}
+            for nc in range(len(row)):
+                # if row[nc] is None:
+                #     theobj[thefields[nc]] = None
+                #     # replace null values with 'blank'
+                # else:
                 theobj[thefields[nc]] = row[nc]
 
-        theregistrant = None
-        if theobj['cur_registrant_id']:
-            thepid = SESAR_USER_LKUP[str(theobj['cur_registrant_id'])]
-            theregistrant = get_Agent(g, thepid)
 
-        thekeywords = []
-        if theobj['geologic_unit']:
-            thek = IdentifiedConcept(
-             pid='geo_unit.' + str(theobj['sample_id']),
-             label=theobj['geologic_unit'],
-             scheme_name="Geologic Unit",
-             scheme_uri=None )
-            thekeywords.append(thek)
-        if theobj['geologic_age_older_id']:
-            theconcept = GetIdentifiedConcept(g,'gts.'+str(theobj['geologic_age_older_id']))
-            theconcept[0]['scheme_name'] = 'Geologic Age Older'
-            thekeywords.append(theconcept)
-        if theobj['geologic_age_younger_id']:
-            theconcept = GetIdentifiedConcept(g,'gts.'+str(theobj['geologic_age_younger_id']))
-            theconcept[0]['scheme_name'] = 'Geologic Age Younger'
-            thekeywords.append(theconcept)
-        if len(thekeywords) == 0:
-            thekeywords = None
+            theregistrant = None
+            if theobj['cur_registrant_id'] is not None:
+                try:
+                    thepid = SESAR_USER_LKUP[str(theobj['cur_registrant_id'])]
+                    theregistrant = agent_lkup[thepid]
+                except Exception as e:
+                    LOGGER.info(f'registration lookup fail, exception {repr(e)}')
+
+            samdesc = ''
+            if theobj['sample_description'] is not None:
+                samdesc = theobj['sample_description']
+            if theobj['material_name_verbatim'] is not None:
+                samdesc += ". Material: " + theobj['material_name_verbatim']
+            if theobj['size'] is not None:
+                samdesc += ". Sample size: " + theobj['size']
+            # if have start and endpoints for lat and long
+            if theobj['latitude'] is not None and theobj['latitude_end'] is not None:
+                samdesc += ". Latitude from " + str(theobj['latitude']) + " to " + str(theobj['latitude_end'])
+            if theobj['longitude'] is not None and theobj['longitude_end'] is not None:
+                samdesc += ", Longitude from " + str(theobj['longitude']) + " to " + str(theobj['longitude_end'])
+            if theobj['geologic_age_verbatim'] is not None:
+                samdesc += ". Age: " + theobj['geologic_age_verbatim']
+            # add numeric ages
+            if theobj['numeric_age_min'] is not None and theobj['numeric_age_max'] is not None:
+                samdesc += ". Age between " + str(theobj['numeric_age_min']) + " and " + str(theobj['numeric_age_max'])
+            elif theobj['numeric_age_min'] is not None:
+                samdesc += ". Minimum age " + str(theobj['numeric_age_min'])
+            elif theobj['numeric_age_max'] is not None:
+                samdesc += ". Maximum age " + str(theobj['numeric_age_max'])
+
+            if theobj['numeric_age_unit'] is not None:
+                samdesc += " Age units " + theobj['numeric_age_unit']
+            if theobj['age_qualifier'] is not None:
+                samdesc += ", Age qualitifer: " + theobj['age_qualifier']
 
 
-        ms = MaterialSampleRecord(
-            pid=f"sam.{str(theobj['sample_id'])}",
-            alternate_identifiers=None,
-            complies_with=None,
-            curation=None,
-            dc_rights=None,
-            description=theobj['sample_description'],
-            has_context_category=GetIdentifiedConcept(g, 'sft.'+str(theobj['sampled_feature_type_id'])),
-                # material category is populated from general_material_type_id, material_name_verbatim
-                # and  sample_material.material_type_id
-            has_material_category=GetIdentifiedConcept(g, 'mat.'+str(theobj['general_material_type_id'])),
+            thekeywords = []
+            if theobj['geologic_unit'] is not None:
+                thek = IdentifiedConcept(
+                    pid='geo_unit.' + str(theobj['sample_id']),
+                    label=theobj['geologic_unit'],
+                    scheme_name="Geologic Unit",
+                    scheme_uri=None)
+                thekeywords.append(thek)
+            thealtid = []
+            if theobj['geologic_age_older_id'] is not None:
+                #            theconcept = get_altid_identifiedconcept(g, 'gts.' + str(theobj['geologic_age_older_id']))
+                theconcept = concept_lkup['gts.' + str(theobj['geologic_age_older_id'])]
+                #            test = concept_lkup['gts.' + str(theobj['geologic_age_older_id'])]
+                theconcept['scheme_name'] = 'Geologic Age Older'
+                thealtid.append('gts.' + str(theobj['geologic_age_older_id']))
+                theconcept['altids'] = thealtid
+                thekeywords.append(theconcept)
+            if theobj['geologic_age_younger_id'] is not None:
+                #            theconcept = get_altid_identifiedconcept(g, 'gts.' + str(theobj['geologic_age_younger_id']))
+                theconcept = concept_lkup['gts.' + str(theobj['geologic_age_younger_id'])]
+                theconcept['scheme_name'] = 'Geologic Age Younger'
+                thealtid.append('gts.' + str(theobj['geologic_age_younger_id']))
+                theconcept['altids'] = thealtid
+                thekeywords.append(theconcept)
+            if len(thekeywords) == 0:
+                thekeywords = None
 
-            has_sample_object_type=GetIdentifiedConcept(g, 'sat.'+str(theobj['sample_type_id'])),
+            try:
+                addnames = addName_lkup[str(theobj['sample_id'])]
+            except:
+                addnames = None
 
-            keywords=thekeywords,
-            label=theobj['name'],
-            last_modified_time=theobj['last_update_date'],
-            produced_by=get_SamplingEvent(g,theobj,COLLECTOR_LKUP,LOCALITY_LKUP,INIT_LKUP),
-            registrant=theregistrant,
-            related_resource=None,
-            sample_identifier=theobj['igsn'],
-            sampling_purpose=theobj['purpose']
-        )
-        g.addNode(ms)
-        print(f"sam.{str(theobj['sample_id'])}")
+            try:
+                therels = relres_lkup[str(theobj['sample_id'])]
+            except:
+                therels = None
+
+            try:
+                has_context_cat = concept_lkup['sft.' + str(theobj['sampled_feature_type_id'])]
+            except:
+                has_context_cat = None
+
+            try:
+                has_material_cat = concept_lkup['mat.' + str(theobj['general_material_type_id'])]
+            except:
+                has_material_cat = None
+
+            try:
+                has_sample_obj_type = concept_lkup['sat.' + str(theobj['sample_type_id'])]
+            except:
+                has_sample_obj_type = None
+
+            ms = MaterialSampleRecord(
+                pid=f"sam.{str(theobj['sample_id'])}",
+                alternate_identifiers=addnames,
+                complies_with=None,
+                curation=get_MaterialSampleCuration(g, theobj, SESAR_USER_LKUP, agent_lkup),
+                dc_rights=None,
+                description=samdesc,
+
+                has_context_category=has_context_cat,
+                has_material_category=has_material_cat,
+                has_sample_object_type=has_sample_obj_type,
+
+                keywords=thekeywords,
+                label=theobj['name'],
+                last_modified_time=theobj['last_update_date'],
+                produced_by=get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, concept_lkup, agent_lkup),
+                registrant=theregistrant,
+                related_resource=therels,
+                sample_identifier=theobj['igsn'],
+                sampling_purpose=theobj['purpose']
+            )
+
+            g.addNode(ms)
+
+            end_tim4 = time.time()
+            execution_time = (end_tim4 - loopstart_time)*1000
+            LOGGER.debug(f"total for{str(theobj['sample_id'])}: {execution_time} milliseconds")
+
+            therow += 1
+            if therow % 10000 == 0:
+                LOGGER.info(f'load sample therow: {therow}')
+                end_time = time.time()
+                execution_time = end_time - rept_time
+                LOGGER.info(f"get 10000 samples execution time: {execution_time} seconds")
+                print(f"load sample {therow}")
+                rept_time = time.time()
+
+        LOGGER.info(f'load iteration done. max_id: {max_id}')
+        if max_id == sample_max_id:
+            print(f'load sample loop done. break')
+            result = 1
+            break
     return 1
 
 
@@ -738,81 +1047,89 @@ def get_record(g, pid):
 
 
 def main(dest: str = None):
-
-    loadvocabs = False
-    loadtables = False
+    loadvocabs = True
+    loadtables = True
+    tstart_time = time.time()
 
     sesarDb = get_2025Connection()
     if sesarDb:
-        print("Connection to SESAR2025 PostgreSQL database established successfully.")
+        print("Connection to SESAR2025 PostgresSQL database established successfully.")
     else:
-        print("Connection to SESAR2025 PostgreSQL encountered an error.")
+        print("Connection to SESAR2025 PostgresSQL encountered an error.")
         exit()
 
-    theddb ='sesarduck.ddb'
+    theddb = 'sesarduck.ddb'
     dbinstance = duckdb.connect(theddb)
     g = createGraph(dbinstance)
 
+    concept_lkup = {}
     if loadvocabs:
         vocablist = []
         vocablist.append(['affiliation_type', 'aft', '', 'label',
-                'SESAR Affiliation Type', '', 'affiliation_type_id'])
+                          'SESAR Affiliation Type', '', 'affiliation_type_id'])
         vocablist.append(['agent_role_type', 'art', '', 'label',
-                'SESAR agent roles', '', 'agent_role_id'])
+                          'SESAR agent roles', '', 'agent_role_id'])
         # vocablist.append(['collection_type', '', 'feature_type_uri', 'label',
         #         'SESAR Sampled Feature Type', 'scheme_uri', 'feature_type_id'])
         vocablist.append(['country', 'cty', 'iso3166code', 'label',
-                'ISO3166 country', '', 'country_id'])
+                          'ISO3166 country', '', 'country_id'])
         vocablist.append(['geologic_time_scale', 'gts', 'geologic_time_interval_uri', 'label',
-                'ICS 2020 Chronostratigraphic', 'scheme_uri', 'geologic_time_id'])
+                          'ICS 2020 Chronostratigraphic', 'scheme_uri', 'geologic_time_id'])
         vocablist.append(['initiative_type', 'ini', '', 'label',
-                'SESAR Initiative Type', '', 'initiative_type_id'])
+                          'SESAR Initiative Type', '', 'initiative_type_id'])
         vocablist.append(['institution_type', 'ins', '', 'label',
-                'SESAR Institution Type', '', 'institution_type_id'])
+                          'SESAR Institution Type', '', 'institution_type_id'])
         vocablist.append(['launch_type', 'lat', '', 'label',
-                'SESAR Launch Type', '', 'launch_type_id'])
+                          'SESAR Launch Type', '', 'launch_type_id'])
         # vocablist.append(['locality', 'loc', 'locality_uri', 'name',
         #         'SESAR locality', '', 'locality_id'])
         vocablist.append(['location_method', 'lom', '', 'label',
-                'SESAR Location Method', '', 'location_method_id'])
+                          'SESAR Location Method', '', 'location_method_id'])
         vocablist.append(['material_role_type', 'mar', '', 'label',
-                'SESAR Material Role', '', 'material_role_id'])
+                          'SESAR Material Role', '', 'material_role_id'])
         vocablist.append(['platform', 'pla', '', 'label',
-                'SESAR Platform', '', 'platform_id'])
+                          'SESAR Platform', '', 'platform_id'])
         vocablist.append(['platform_type', 'plt', '', 'label',
-                'SESAR Platform Type', '', 'platform_type_id'])
+                          'SESAR Platform Type', '', 'platform_type_id'])
         # vocablist.append(['property_type', '', 'sample_type_uri', 'label',
         #         'SESAR Sample Type', 'scheme_uri', 'sample_type_id'])
         vocablist.append(['relation_type', 'rel', '', 'label',
-                'SESAR relation Type', 'scheme_uri', 'relation_type_id'])
+                          'SESAR relation Type', 'scheme_uri', 'relation_type_id'])
         vocablist.append(['resource_type', 'ret', 'resource_type_uri', 'label',
-                'SESAR Resource Type', 'scheme_uri', 'resource_type_id'])
+                          'SESAR Resource Type', 'scheme_uri', 'resource_type_id'])
         vocablist.append(['sample_type', 'sat', 'sample_type_uri', 'label',
-                'SESAR Sample Type', 'scheme_uri', 'sample_type_id'])
+                          'SESAR Sample Type', 'scheme_uri', 'sample_type_id'])
         vocablist.append(['sampled_feature_type', 'sft', 'feature_type_uri', 'label',
-                'SESAR Sampled Feature Type', 'scheme_uri', 'feature_type_id'])
+                          'SESAR Sampled Feature Type', 'scheme_uri', 'feature_type_id'])
         vocablist.append(['sampling_method', 'sam', 'method_uri', 'label',
-                'SESAR Sampling Method', 'scheme_uri', 'collection_method_id'])
+                          'SESAR Sampling Method', 'scheme_uri', 'collection_method_id'])
+        vocablist.append(['sesar_spatial_ref_sys', 'ssr', 'identifier', 'name',
+                          'SESAR Spatial Reference Systems', '', 'spatial_ref_id'])
 
         for vocab in vocablist:
-            result = load_vocab_table(newDb, g, vocab)
+            result = load_vocab_table(g, vocab, concept_lkup)
             print(f'{vocab[0]} loaded')
 
+
+    agent_lkup = {}
     if loadtables:
-        result = load_material_type(newDb, g)
+        result = load_material_type(g,concept_lkup)
         print(f'material type loaded {result}')
-        result = load_individuals(newDb,g)
+        result = load_individuals(g, agent_lkup)
         print(f'individuals loaded {result}')
-        result = load_institution(newDb,g)
+        result = load_institution(g, agent_lkup)
         print(f'institution loaded {result}')
 
-
-    result = load_samples(newDb, g)
+    result = load_samples(g, concept_lkup, agent_lkup)
 
     dest = 'sesarTest'
     if dest is not None:
         g.asParquet(pathlib.Path(dest))
 
+    tend_time = time.time()
+    execution_time = tend_time - tstart_time
+    LOGGER.info(f'total run time: {execution_time / 3600} hours')
+    newDb.close()
 
 if __name__ == "__main__":
     #    logging.basicConfig(level=logging.DEBUG)

@@ -365,6 +365,8 @@ class PQG:
                 lat_lon = {"x":None, "y":None,}
                 #TODO: Handling of geometry is pretty rough. This should really be something from the object level
                 # rather that kluging tuff together here.
+                _L.debug(f"addNodeEntry called with {repr(data)}")
+
                 for k,v in data.items():
                     if k not in _names:
                         _names.append(k)
