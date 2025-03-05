@@ -7,6 +7,10 @@ import logging
 import typing
 import click
 import duckdb
+
+import rich
+import rich.tree
+
 import pqg
 import pqg.common
 
@@ -73,8 +77,23 @@ def tree(ctx, store, pid:str):
     """
     graph = pqg.PQG(ctx.obj['dbinstance'], store)
     graph.loadMetadata()
+    _tree = rich.tree.Tree(pid)
+    t0 = {pid: _tree,}
     for entry in graph.breadthFirstTraversal(pid):
+        s = entry[0]
+        p = entry[1]
+        o = entry[2]
+        _ts = t0[s]
+        _tp = t0.get(p)
+        if _tp is None:
+            _tp = _ts.add(p)
+            t0[p] = _tp
+        _to = t0.get(o)
+        if _to is None:
+            _to = _tp.add(o)
+            t0[o] = _to
         print(json.dumps(entry))
+    rich.print(_tree)
 
 
 @cli.command("types")

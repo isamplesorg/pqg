@@ -19,6 +19,7 @@ dependencies = [
     "pytz>=2024.2",
     "pyvis>=0.3.2",
     "rdflib>=7.0.0",
+    "rich>=13.9.4",
     "rustworkx>=0.16.0",
 ]
 
