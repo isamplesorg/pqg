@@ -529,7 +529,7 @@ class PQG:
         self._connection.commit()
         return result
 
-    def getNode(self, pid:str, max_depth:int=10, _depth:int=0)->typing.Dict[str, typing.Any]:
+    def getNode(self, pid:str, max_depth:int=100, _depth:int=0)->typing.Dict[str, typing.Any]:
         # Retrieve graph of object referenced by pid
         # reconstruct object from the list of node entries
         # ? can we construct a JSON representation of the object using CTE
@@ -540,18 +540,18 @@ class PQG:
             with self.getCursor() as csr:
                 sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
                 _L.debug(sql)
-                results = csr.execute(sql, [pid])
-                while edge := results.fetchone():
-                    # Handle multiple values for related objects.
-                    # Convert entry to a list if another value is found
-                    if data.get(edge[0]) is not None:
-                        if isinstance(data[edge[0]], list):
-                            data[edge[0]].append(edge[1])
-                        else:
-                            _tmp = data[edge[0]]
-                            data[edge[0]] = [_tmp, self.getNode(edge[1],_depth=_depth+1)]
+                results = csr.execute(sql, [pid, ]).fetchall()
+            for edge in results:
+                # Handle multiple values for related objects.
+                # Convert entry to a list if another value is found
+                if data.get(edge[0]) is not None:
+                    if isinstance(data[edge[0]], list):
+                        data[edge[0]].append(self.getNode(edge[1], _depth=_depth+1))
                     else:
-                        data[edge[0]] = self.getNode(edge[1], _depth=_depth+1)
+                        _tmp = data[edge[0]]
+                        data[edge[0]] = [_tmp, self.getNode(edge[1],_depth=_depth+1)]
+                else:
+                    data[edge[0]] = self.getNode(edge[1], _depth=_depth+1)
         return data
 
     def getNodeIds(self, pid:str)->typing.Set[str]:
