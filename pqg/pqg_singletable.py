@@ -306,11 +306,11 @@ class PQG:
             geometry GEOMETRY DEFAULT NULL,
             {', '.join(all_fields)}
         );""")
-        sql.append(f"CREATE INDEX IF NOT EXISTS node_otype ON {self._table} (otype);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_s ON {self._table} (s);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_p ON {self._table} (p);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_o ON {self._table} (o);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_n ON {self._table} (n);")
+        #sql.append(f"CREATE INDEX IF NOT EXISTS node_otype ON {self._table} (otype);")
+        #sql.append(f"CREATE INDEX IF NOT EXISTS edge_s ON {self._table} (s);")
+        #sql.append(f"CREATE INDEX IF NOT EXISTS edge_p ON {self._table} (p);")
+        #sql.append(f"CREATE INDEX IF NOT EXISTS edge_o ON {self._table} (o);")
+        #sql.append(f"CREATE INDEX IF NOT EXISTS edge_n ON {self._table} (n);")
         _L = getLogger()
         with self.getCursor() as csr:
             # Create the database structure
