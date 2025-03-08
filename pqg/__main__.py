@@ -88,11 +88,12 @@ def tree(ctx, store, pid:str):
         if _tp is None:
             _tp = _ts.add(p)
             t0[p] = _tp
-        _to = t0.get(o)
-        if _to is None:
-            _to = _tp.add(o)
-            t0[o] = _to
-        print(json.dumps(entry))
+        for _o in o:
+            _to = t0.get(_o)
+            if _to is None:
+                _to = _tp.add(_o)
+                t0[_o] = _to
+            #print(json.dumps(entry))
     rich.print(_tree)
 
 

@@ -47,7 +47,7 @@ class Base:
     # predicate, the type of the relation
     p: pqg.common.OptionalStr = None
     # object, i.e. target of relation
-    o: pqg.common.OptionalStr = None
+    o: typing.Optional[typing.List[str]] = None
     # name of graph containing this relation
     n: pqg.common.OptionalStr = None
     # sort order of relation. Used when multiple relations
@@ -65,11 +65,11 @@ class Base:
 
         Could do a content bashed hash instead using a subset of the fields
         """
-        L = getLogger()
-        L.debug("post_init entry: pid = %s", self.pid)
+        #L = getLogger()
+        #L.debug("post_init entry: pid = %s", self.pid)
         if self.pid is None:
             self.pid = f"anon_{pqg.common.getUUID()}"
-        L.debug("exit: pid = %s", self.pid)
+        #L.debug("exit: pid = %s", self.pid)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -91,17 +91,18 @@ class Edge(Base):
 
         The edge PID is computed form the hash of s,p,o,n
         """
-        L = getLogger()
-        L.debug("post_init entry: pid = %s", self.pid)
+        #L = getLogger()
+        #L.debug("post_init entry: pid = %s", self.pid)
         if self.pid is None:
             h = hashlib.sha256()
             h.update(self.s.encode("utf-8"))
             h.update(self.p.encode("utf-8"))
-            h.update(self.o.encode("utf-8"))
+            for _o in self.o:
+                h.update(_o.encode("utf-8"))
             if self.n is not None:
                 h.update(self.n.encode("utf-8"))
             self.pid = f"anon_{h.hexdigest()}"
-        L.debug("exit: pid = %s", self.pid)
+        #L.debug("exit: pid = %s", self.pid)
         super().__post_init__(**kwargs)
 
 
@@ -300,7 +301,7 @@ class PQG:
             otype VARCHAR,
             s VARCHAR REFERENCES node (pid) DEFAULT NULL,
             p VARCHAR DEFAULT NULL,
-            o VARCHAR REFERENCES node (pid) DEFAULT NULL,
+            o VARCHAR[] DEFAULT [],
             n VARCHAR DEFAULT NULL,
             altids VARCHAR[] DEFAULT NULL,
             geometry GEOMETRY DEFAULT NULL,
@@ -374,7 +375,7 @@ class PQG:
                 _values = [pid, otype, ]
                 lat_lon = {"x":None, "y":None,}
                 #TODO: Handling of geometry is pretty rough. This should really be something from the object level
-                # rather that kluging tuff together here.
+                # rather that kluging stuff together here.
                 for k,v in data.items():
                     if k not in _names:
                         _names.append(k)
@@ -419,45 +420,69 @@ class PQG:
         Note that edges may exist independently of nodes, e.g. to make an assertion
         between external entities.
         """
+        assert isinstance(edge.o, list)
         if self._isparquet:
             raise ValueError("Parquet based instances are read only.")
         _L = getLogger()
-        _L.debug("addEdge: %s", edge.pid)
+        _L.debug("addEdge: %s", edge)
         existing = None
-        if edge.pid is None:
-            existing = self.getEdge(s=edge.s, p=edge.p, o=edge.o, n=edge.n)
-        else:
-            existing = self.getEdge(pid=edge.pid)
+        with self.getCursor() as csr:
+            sql = f"SELECT {', '.join(self._edgefields)} FROM {self._table} WHERE otype='_edge_' AND "
+            sql += "s=? AND p=?"
+            _params = [edge.s, edge.p, ]
+            _L.debug(sql)
+            existing = csr.execute(sql, _params).fetchone()
+            if existing is not None:
+                _L.debug("Found existing edge: %s", existing)
+        #if edge.pid is None:
+        #    existing = self.getEdge(s=edge.s, p=edge.p, o=edge.o, n=edge.n)
+        #else:
+        #    existing = self.getEdge(pid=edge.pid)
+        #if existing is not None:
+        #    return existing.pid
         if existing is not None:
-            return existing.pid
-        try:
+            # Is edge.o already in the list?
+            for _o in edge.o:
+                if _o in existing[4]:
+                    _L.debug("Reusing existing edge: %s", existing)
+                    return existing[0]
+            # Update the entry
+            sql = f"UPDATE {self._table} SET o = list_concat(o, ?) where pid=?"
+            _L.debug(sql)
             with self.getCursor() as csr:
-                # ('pid', 'tcreated', 'tmodified', 's', 'p', 'o', 'n', 'label', 'description', 'altids')
-                # epoch(current_timestamp)::integer, epoch(current_timestamp)::integer,
-                csr.execute(
-                    f"""INSERT INTO {self._table} ({', '.join(self._edgefields)}) VALUES (
-                        ?, '_edge_', ?, ?, ?, ?, ?, ?
-                    ) RETURNING pid""",
-                    (
-                        edge.pid,
-                        edge.s,
-                        edge.p,
-                        edge.o,
-                        edge.n,
-                        edge.altids,
-                        None
-                    ),
-                )
-                #csr.commit()
-                rows = csr.fetchone()
-                result = rows[0]
-            self._connection.commit()
-            return result
-        except Exception as e:
-            pass
-            # Will expect unique constraint failures since edge.pid is a hash of s,p,o
-            _L.debug("addEdge %s %s", edge.pid, e)
-        return edge.pid
+                csr.execute(sql, [edge.o, existing[0]])
+                self._connection.commit()
+            return existing[0]
+        else:
+            _L.debug("Adding new edge: %s", edge)
+            try:
+                with self.getCursor() as csr:
+                    # ('pid', 'tcreated', 'tmodified', 's', 'p', 'o', 'n', 'label', 'description', 'altids')
+                    # epoch(current_timestamp)::integer, epoch(current_timestamp)::integer,
+                    csr.execute(
+                        f"""INSERT INTO {self._table} ({', '.join(self._edgefields)}) VALUES (
+                            ?, '_edge_', ?, ?, ?, ?, ?, ?
+                        ) RETURNING pid""",
+                        (
+                            edge.pid,
+                            edge.s,
+                            edge.p,
+                            edge.o,
+                            edge.n,
+                            edge.altids,
+                            None
+                        ),
+                    )
+                    #csr.commit()
+                    rows = csr.fetchone()
+                    result = rows[0]
+                self._connection.commit()
+                return result
+            except Exception as e:
+                pass
+                # Will expect unique constraint failures since edge.pid is a hash of s,p,o
+                _L.error("addEdge failed %s %s", edge.pid, e)
+            return edge.pid
 
     def getEdge(
         self,
@@ -472,29 +497,29 @@ class PQG:
         if (id is None) and (s is None or p is None or o is None or n is None):
             raise ValueError("Must provide id or each of s, p, o, n")
         edgefields = ('pid', 's', 'p', 'o', 'n', 'altids')
-        sql = f"SELECT {', '.join(edgefields)} FROM {self._table} WHERE otype='_edge_' AND"
+        sql = f"SELECT {', '.join(self._edgefields)} FROM {self._table} WHERE otype='_edge_' AND"
         if pid is not None:
             sql += " pid = ?"
             qproperties = (pid,)
         else:
-            sql += " s=? AND p=? AND o=? AND n=?"
-            qproperties = (s, p, o, n)
+            sql += " s=? AND p=? AND list_contains(o, ?) AND n=?"
+            qproperties = (s, p, [o,], n)
         with self.getCursor() as csr:
             _L.debug("getEdge sql: %s", sql)
             csr.execute(sql, qproperties)
             values = csr.fetchone()
             if values is None:
                 return None
-            data = dict(zip(edgefields, values))
+            data = dict(zip(self._edgefields, values))
             return Edge(**data)
 
-    def _addNode(self, o:pqg.common.IsDataclass)->str:
+    def _addNode(self, obj:pqg.common.IsDataclass)->str:
         _L = getLogger()
         deferred = []
-        otype = o.__class__.__name__
+        otype = obj.__class__.__name__
         data = {}
-        for field in dataclasses.fields(o):
-            _v = getattr(o, field.name)
+        for field in dataclasses.fields(obj):
+            _v = getattr(obj, field.name)
             if is_dataclass_or_dataclasslist(_v) or str(type(_v)) in self._types:
                 deferred.append(field.name)
             else:
@@ -503,18 +528,16 @@ class PQG:
         s_pid = self.addNodeEntry(otype, data)
         _L.debug("Added node pid= %s", s_pid)
         for field_name in deferred:
-            _v = getattr(o, field_name)
+            _v = getattr(obj, field_name)
             if isinstance(_v, list):
                 for element in _v:
                     o_pid = self._addNode(element)
-                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
-                    _L.debug("Created edge: %s", _edge)
+                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=[o_pid,])
                     self.addEdge(_edge)
             else:
                 if _v is not None:
                     o_pid = self._addNode(_v)
-                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=o_pid)
-                    _L.debug("Created edge: %s", _edge)
+                    _edge = Edge(pid=None, s=s_pid, p=field_name, o=[o_pid,])
                     self.addEdge(_edge)
         return s_pid
 
@@ -544,14 +567,15 @@ class PQG:
             for edge in results:
                 # Handle multiple values for related objects.
                 # Convert entry to a list if another value is found
-                if data.get(edge[0]) is not None:
-                    if isinstance(data[edge[0]], list):
-                        data[edge[0]].append(self.getNode(edge[1], _depth=_depth+1))
+                for _o in edge[1]:
+                    if data.get(edge[0]) is not None:
+                        if isinstance(data[edge[0]], list):
+                            data[edge[0]].append(self.getNode(_o, _depth=_depth+1))
+                        else:
+                            _tmp = data[edge[0]]
+                            data[edge[0]] = [_tmp, self.getNode(_o,_depth=_depth+1)]
                     else:
-                        _tmp = data[edge[0]]
-                        data[edge[0]] = [_tmp, self.getNode(edge[1],_depth=_depth+1)]
-                else:
-                    data[edge[0]] = self.getNode(edge[1], _depth=_depth+1)
+                        data[edge[0]] = self.getNode(_o, _depth=_depth+1)
         return data
 
     def getNodeIds(self, pid:str)->typing.Set[str]:
@@ -564,7 +588,8 @@ class PQG:
             sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
             edges = csr.execute(sql, [pid]).fetchall()
             for edge in edges:
-                result = result.union(self.getNodeIds(edge[1]))
+                for i in edge[1]:
+                    result = result.union(self.getNodeIds(i))
         return result
 
     def getIds(self, otype:typing.Optional[str]=None, maxrows:int=0)->typing.Iterator[typing.Tuple[str, str]]:
@@ -581,6 +606,31 @@ class PQG:
             while batch := result.fetchmany(size=batch_size):
                 for row in batch:
                     yield row[0], row[1]
+
+    def getRelations(
+            self,
+            subject: typing.Optional[str]=None,
+            predicate: typing.Optional[str]=None,
+            obj: typing.Optional[str] = None,
+            maxrows:int=0
+        )->typing.Iterator[typing.Tuple[str, str, str]]:
+        batch_size = 100
+        sql = f"SELECT s, p, o FROM {self._table}"
+        params = []
+        if subject is not None:
+            sql += " WHERE s=?"
+        if predicate is not None:
+            sql += " WHERE p=?"
+        if obj is not None:
+            sql += " WHERE o=?"
+        if maxrows > 0:
+            sql += f" LIMIT {maxrows}"
+        with self.getCursor() as csr:
+            result = csr.execute(sql, params)
+            while batch := result.fetchmany(size=batch_size):
+                for row in batch:
+                    for _o in row[2]:
+                        yield row[0], row[1], _o
 
     def objectCounts(self)->typing.Iterator[typing.Tuple[str, int]]:
         with self.getCursor() as csr:
@@ -632,7 +682,8 @@ class PQG:
                 color = ''
                 if e[0] in elights:
                     color = ',color=red'
-                dest.append(f"{qlabel(e[1])} -> {qlabel(e[3])} [label=\"{e[2]}\"" + color + "];")
+                for _o in e[3]:
+                    dest.append(f"{qlabel(e[1])} -> {qlabel(_o)} [label=\"{e[2]}\"" + color + "];")
         dest.append("}")
         return dest
 
@@ -743,7 +794,7 @@ class PQG:
         sql = f"""WITH RECURSIVE edge_for(s, p, o, depth) AS (
             SELECT e.s, e.p, e.o, 1 AS depth FROM {self._table} AS e WHERE e.s=$pid AND e.otype='_edge_'
         UNION ALL
-            SELECT e.s, e.p, e.o, depth+1 AS depth FROM {self._table} AS e, edge_for WHERE e.s=edge_for.o AND e.otype='_edge_'
+            SELECT e.s, e.p, e.o, depth+1 AS depth FROM {self._table} AS e, edge_for WHERE list_contains(edge_for.o, e.s) AND e.otype='_edge_'
         ) SELECT s, p, o, depth FROM edge_for;
         """
         L = getLogger()
