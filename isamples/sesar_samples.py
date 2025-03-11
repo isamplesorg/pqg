@@ -5,15 +5,16 @@ based on Code by Dave Vieglais
 Modified for SESAR by SM Richard 2025-02-28
 """
 
-import json
-import pathlib
+#import json
+#import pathlib
 # import typing
-# import pqg
+import pqg
 from isamples import *
 import time
 import psycopg2
 import logging
 import duckdb
+from isamples.load_insert_lists import *
 
 LOGGER = logging.getLogger('sesarParquet')
 SESAR_USER_LKUP = {}
@@ -811,14 +812,6 @@ def load_samples(g, concept_lkup, agent_lkup):
     start_time = time.time()  # time the function execution
     tableName = 'sample'
     batchsize = 100000
-    # selectRecordQuery = 'SELECT * FROM public.' + tableName + ' order by sample_id  limit ' + str(batchsize)
-    # LOGGER.debug(f"get_sample_data record query: {repr(selectRecordQuery)}")
-    # try:
-    #     data = executeQuery(newDb, selectRecordQuery)
-    # except:
-    #     LOGGER.info('get_sample_data data query failed')
-    #     return
-
     SESAR_USER_LKUP = load_sesar_user_lkup()
     if SESAR_USER_LKUP:
         print(f'SESAR_USER_LKUP loaded')
@@ -869,7 +862,7 @@ def load_samples(g, concept_lkup, agent_lkup):
          sample_max_id = 0
 
     max_id = 0  # starting value
-
+    insertDict = {}
     while True:
         selectRecordQuery = 'SELECT * FROM public.' + tableName + ' where sample_id > ' + str(max_id) + \
                             '  order by sample_id ' + \
@@ -892,7 +885,7 @@ def load_samples(g, concept_lkup, agent_lkup):
         except:
             LOGGER.info('get_max sample ID failed')
             break
-        LOGGER.debug(f'got sample data, start at max_id {max_id}')
+        LOGGER.info(f'got sample data, start at max_id {max_id}')
 
         therow = 0
         rept_time = end_time
@@ -1017,14 +1010,19 @@ def load_samples(g, concept_lkup, agent_lkup):
                 sampling_purpose=theobj['purpose']
             )
 
-            g.addNode(ms)
+            # g.addNode(ms)
+
+            addNodeToList(g,  ms, insertDict)
 
             end_tim4 = time.time()
             execution_time = (end_tim4 - loopstart_time)*1000
             LOGGER.debug(f"total for{str(theobj['sample_id'])}: {execution_time} milliseconds")
 
             therow += 1
-            if therow % 10000 == 0:
+            if therow % 10 == 0:
+
+                writeduckdb(g,insertDict)
+                insertDict = {}
                 LOGGER.info(f'load sample therow: {therow}')
                 end_time = time.time()
                 execution_time = end_time - rept_time
@@ -1049,6 +1047,7 @@ def get_record(g, pid):
 def main(dest: str = None):
     loadvocabs = True
     loadtables = True
+    loadsamples = True
     tstart_time = time.time()
 
     sesarDb = get_2025Connection()
@@ -1058,7 +1057,7 @@ def main(dest: str = None):
         print("Connection to SESAR2025 PostgresSQL encountered an error.")
         exit()
 
-    theddb = 'sesarduck.ddb'
+    theddb = 'sesarduck2.ddb'
     dbinstance = duckdb.connect(theddb)
     g = createGraph(dbinstance)
 
@@ -1120,9 +1119,10 @@ def main(dest: str = None):
         result = load_institution(g, agent_lkup)
         print(f'institution loaded {result}')
 
-    result = load_samples(g, concept_lkup, agent_lkup)
+    if loadsamples:
+        load_samples(g, concept_lkup, agent_lkup)
 
-    dest = 'sesarTest'
+    dest = 'sesarTest2'
     if dest is not None:
         g.asParquet(pathlib.Path(dest))
 

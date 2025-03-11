@@ -11,6 +11,7 @@ import faker
 
 import pqg
 from isamples import *
+from isamples.load_insert_lists import *
 
 # Used for generating random-ish values
 generator = faker.Faker()
@@ -263,13 +264,16 @@ def get_record(g, pid):
     record = g.getNode(pid)
     #print(record)
     print(json.dumps(record, indent=2, cls=pqg.JSONDateTimeEncoder))
-
+    return record
 
 def main(dest:str=None):
     dbinstance = duckdb.connect(dest)
     g = createGraph(dbinstance)
     make_fakes(g, count=10)
-    get_record(g, "msr_0")
+    ms = get_record(g, "msr_0")
+    insertDict = {}
+    addNodeToList(g, ms, insertDict)
+
     if dest is not None:
         g.asParquet(pathlib.Path(dest))
     dbinstance.close()
