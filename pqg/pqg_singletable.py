@@ -463,8 +463,8 @@ class PQG:
         #return None
         if (id is None) and (s is None or p is None or o is None or n is None):
             raise ValueError("Must provide id or each of s, p, o, n")
-        edgefields = ('pid', 's', 'p', 'o', 'n', 'altids')
-        sql = f"SELECT {', '.join(edgefields)} FROM {self._table} WHERE otype='_edge_' AND"
+        #edgefields = ('pid', 's', 'p', 'o', 'n', 'altids')
+        sql = f"SELECT {', '.join(self._edgefields)} FROM {self._table} WHERE otype='_edge_' AND"
         if pid is not None:
             sql += " pid = ?"
             qproperties = (pid,)
@@ -477,7 +477,7 @@ class PQG:
             values = csr.fetchone()
             if values is None:
                 return None
-            data = dict(zip(edgefields, values))
+            data = dict(zip(self._edgefields, values))
             return Edge(**data)
 
     def _addNode(self, o:pqg.common.IsDataclass)->str:

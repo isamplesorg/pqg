@@ -8,13 +8,16 @@ Modified for SESAR by SM Richard 2025-02-28
 #import json
 #import pathlib
 # import typing
-import pqg
-from isamples import *
-import time
+#import pqg
+#from isamples import *
+#import time
 import psycopg2
-import logging
-import duckdb
-from isamples.load_insert_lists import *
+#import logging
+#import duckdb
+import sys
+sys.path.append('C:/Users/smrTu/OneDrive/Documents/GithubC/iSamples/pqg/')
+from load_insert_lists import *
+from line_profiler import profile
 
 LOGGER = logging.getLogger('sesarParquet')
 SESAR_USER_LKUP = {}
@@ -808,10 +811,12 @@ def get_MaterialSampleCuration(g, theobj, SESAR_USER_LKUP, agent_lkup) -> Materi
         return None
 
 
+
+@profile
 def load_samples(g, concept_lkup, agent_lkup):
     start_time = time.time()  # time the function execution
     tableName = 'sample'
-    batchsize = 100000
+    batchsize = 1000
     SESAR_USER_LKUP = load_sesar_user_lkup()
     if SESAR_USER_LKUP:
         print(f'SESAR_USER_LKUP loaded')
@@ -861,7 +866,8 @@ def load_samples(g, concept_lkup, agent_lkup):
     except:
          sample_max_id = 0
 
-    max_id = 0  # starting value
+    #max_id = 0  # starting value
+    max_id = 3234568  # starting value
     insertDict = {}
     while True:
         selectRecordQuery = 'SELECT * FROM public.' + tableName + ' where sample_id > ' + str(max_id) + \
@@ -1009,9 +1015,6 @@ def load_samples(g, concept_lkup, agent_lkup):
                 sample_identifier=theobj['igsn'],
                 sampling_purpose=theobj['purpose']
             )
-
-            # g.addNode(ms)
-
             addNodeToList(g,  ms, insertDict)
 
             end_tim4 = time.time()
@@ -1019,21 +1022,21 @@ def load_samples(g, concept_lkup, agent_lkup):
             LOGGER.debug(f"total for{str(theobj['sample_id'])}: {execution_time} milliseconds")
 
             therow += 1
-            if therow % 10 == 0:
-
+            writebatchsize = 100
+            if therow % writebatchsize == 0:
                 writeduckdb(g,insertDict)
                 insertDict = {}
                 LOGGER.info(f'load sample therow: {therow}')
                 end_time = time.time()
                 execution_time = end_time - rept_time
-                LOGGER.info(f"get 10000 samples execution time: {execution_time} seconds")
+                LOGGER.info(f"get {writebatchsize} samples execution time: {execution_time} seconds")
                 print(f"load sample {therow}")
                 rept_time = time.time()
 
         LOGGER.info(f'load iteration done. max_id: {max_id}')
-        if max_id == sample_max_id:
+        #if max_id == sample_max_id:
+        if therow >= 1000:
             print(f'load sample loop done. break')
-            result = 1
             break
     return 1
 
@@ -1130,6 +1133,7 @@ def main(dest: str = None):
     execution_time = tend_time - tstart_time
     LOGGER.info(f'total run time: {execution_time / 3600} hours')
     newDb.close()
+    dbinstance.close()
 
 if __name__ == "__main__":
     #    logging.basicConfig(level=logging.DEBUG)

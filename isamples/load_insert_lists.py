@@ -1,14 +1,10 @@
-import dataclasses
-import logging
-import typing
-import duckdb
-from pqg import __version__
-from pqg.pqg_singletable import *
-
-from pqg.common import *
-from isamples import *
+#from pqg import __version__
 import datetime
-from psycopg2.extras import execute_values
+
+from __init__ import *
+from pqg.common import *
+from pqg.pqg_singletable import *
+from line_profiler import profile
 
 LOGGER = logging.getLogger('insertlist')
 
@@ -68,6 +64,7 @@ def get_testrecord()->MaterialSampleRecord:
                 altids=None, s=None, p=None, o=None, n=None)
     return testrecord
 
+@profile
 def addNodeToList(g, o:pqg.common.IsDataclass,insertDict:dict) -> str:
     '''
     insert dict structure:
@@ -154,7 +151,7 @@ def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict
                 lat_lon = {"x":None, "y":None,}
                 #TODO: Handling of geometry is pretty rough. This should really be something from the object level
                 # rather that kluging stuff together here.
-                _L.info(f"addNodeEntry called with {repr(data)}")
+                _L.debug(f"addNodeEntry called with {repr(data)}")
 
                 for k,v in data.items():
                     if k not in _names:
@@ -174,12 +171,10 @@ def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict
 
                 if lat_lon['x'] is not None and lat_lon['y'] is not None:
                     _names.append("geometry")
-
-                # if lat_lon['x'] is not None and lat_lon['y'] is not None:
                 #     #thegeom = f"ST_POINT({str(lat_lon['x'])}, {str(lat_lon['y'])})"
                 #     #_values.append(thegeom)
-                #     _values.append(lat_lon['x'])
-                #     _values.append(lat_lon['y'])
+                    _values.append(lat_lon['x'])
+                    _values.append(lat_lon['y'])
 
                 valuestuple = tuple(_values)
 
@@ -197,8 +192,8 @@ def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict
                 _L.debug("add InsertDict Entry %s", insertDict[otype])
 
             except Exception as e:
+                _L.info("addNodeEntry fail %s", e)
                 pass
-                _L.warning("addNodeEntry %s", e)
         return pid
 
 
@@ -272,8 +267,8 @@ def writeduckdb(g, insertDict:dict):
         with g.getCursor() as csr:
             try:
                 thesql = f"INSERT OR REPLACE INTO {g._table} ({thefields}) VALUES ({', '.join(['?',]*len(thevalues[0]))})"
-                if 'geometry' in thefields:
-                        thesql = thesql[:-4] + ", ST_POINT(?,?)"
+                if key != '_edge_' and 'geometry' in thefields:
+                        thesql = thesql[:-7] + ", ST_POINT(?,?) )"
                 csr.executemany(thesql,thevalues)
             except Exception as e:
                 LOGGER.info(f"writeduckdb fail, e: {repr(e)}")
