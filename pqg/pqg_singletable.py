@@ -12,6 +12,7 @@ import sqlite3
 
 import pqg.common
 from pqg import __version__
+#from line_profiler import profile
 
 _DBMS_ = duckdb
 #_DBMS_ = sqlite3
@@ -93,7 +94,8 @@ class Edge(Base):
         L = getLogger()
         L.debug("post_init entry: pid = %s", self.pid)
         if self.pid is None:
-            h = hashlib.sha256()
+            h = hashlib.md5()  # smrChange to md5, for shorter random pids
+            #h = hashlib.sha256()
             h.update(self.s.encode("utf-8"))
             h.update(self.p.encode("utf-8"))
             h.update(self.o.encode("utf-8"))
@@ -332,6 +334,7 @@ class PQG:
                 self._connection.commit()
 
 
+   #@profile
     def nodeExists(self, pid:str)->typing.Optional[typing.Tuple[str, str]]:
         if pid in self._pidcache:
             return (pid, self._pidcache[pid])
@@ -451,6 +454,7 @@ class PQG:
             _L.debug("addEdge %s %s", edge.pid, e)
         return edge.pid
 
+    #@profile
     def getEdge(
         self,
         pid: pqg.common.OptionalStr = None,

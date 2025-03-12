@@ -5,19 +5,20 @@ based on Code by Dave Vieglais
 Modified for SESAR by SM Richard 2025-02-28
 """
 
-#import json
-#import pathlib
+# import json
+# import pathlib
 # import typing
-#import pqg
-#from isamples import *
-#import time
+# import pqg
+# from isamples import *
+# import time
 import psycopg2
-#import logging
-#import duckdb
+# import logging
+# import duckdb
 import sys
 sys.path.append('C:/Users/smrTu/OneDrive/Documents/GithubC/iSamples/pqg/')
 from load_insert_lists import *
-from line_profiler import profile
+#from line_profiler import profile
+import pickle
 
 LOGGER = logging.getLogger('sesarParquet')
 SESAR_USER_LKUP = {}
@@ -114,7 +115,7 @@ def getFields(conn, tableName):
     return fieldlist
 
 
-def load_vocab_table(g, args: list, concept_lkup):
+def load_concept_lkup(args: list, concept_lkup):
     start_time = time.time()  # time the function execution
     # args list order:
     # tableName,abbrev,urifield,labelfield,schemename,schemeurifield,idfield
@@ -163,7 +164,7 @@ def load_vocab_table(g, args: list, concept_lkup):
     return 1
 
 
-def load_material_type(g,concept_lkup):
+def load_material_type(concept_lkup):
     start_time = time.time()  # time the function execution
     tableName = 'material_type'
     abbrev = 'mat'
@@ -207,7 +208,7 @@ def load_material_type(g,concept_lkup):
     return 1
 
 
-def load_individuals(g,agent_lkup):
+def load_individuals(agent_lkup):
     start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
     tableName = 'individual'
@@ -268,7 +269,7 @@ def load_individuals(g,agent_lkup):
         agent_lkup[abbrev + '.' + str(theobj['individual_id'])] = theagent
     end_time = time.time()
     execution_time = end_time - start_time
-    LOGGER.info(f"load indivduals execution time: {execution_time} seconds")
+    LOGGER.info(f"load individualas in agent_lkup execution time: {execution_time} seconds")
     return 1
 
 
@@ -378,7 +379,7 @@ def load_locality_lkup():
     return locality_lookup
 
 
-def load_institution(g,agent_lkup):
+def load_institution(agent_lkup):
     start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
     tableName = 'institution'
@@ -810,50 +811,50 @@ def get_MaterialSampleCuration(g, theobj, SESAR_USER_LKUP, agent_lkup) -> Materi
         LOGGER.info(f"Sample Curation; No owner; Exception: {repr(e)}")
         return None
 
+def load_lkup(lkup_name:str, lkup_function:callable) -> dict | None:
+    lkup_dict = {}
+    try:
+        with open(f'{lkup_name}.pkl', 'rb') as file:
+            lkup_dict = pickle.load(file)
+            return lkup_dict
+    except Exception as e:
+        lkup_dict = lkup_function()
+        if lkup_dict:
+            with open(f'{lkup_name}.pkl', 'wb') as file:
+                pickle.dump(lkup_dict, file)
+            print(f'{lkup_name} lkup loaded')
+            return lkup_dict
+        else:
+            print(f'{lkup_name} fail !!!!!!')
+            return None
 
-
-@profile
+#@profile
 def load_samples(g, concept_lkup, agent_lkup):
     start_time = time.time()  # time the function execution
     tableName = 'sample'
-    batchsize = 1000
-    SESAR_USER_LKUP = load_sesar_user_lkup()
-    if SESAR_USER_LKUP:
-        print(f'SESAR_USER_LKUP loaded')
-    else:
-        print(f'SESAR_USER_LKUP fail !!!!!!')
-    INIT_LKUP = load_initiative_lkup()
-    if INIT_LKUP:
-        print(f'INIT_LKUP loaded ')
-    else:
-        print(f'INIT_LKUP fail !!!!!!')
-    COLLECTOR_LKUP = load_collector_lkup()
-    if COLLECTOR_LKUP:
-        print(f'COLLECTOR_LKUP loaded ')
-    else:
-        print(f'COLLECTOR_LKUP fail !!!!!!')
-    ARCHIVE_LKUP = load_archive_lkup()
-    if ARCHIVE_LKUP:
-        print(f'ARCHIVE_LKUP loaded ')
-    else:
-        print(f'ARCHIVE_LKUP fail !!!!!!')
-    LOCALITY_LKUP = load_locality_lkup()
-    if LOCALITY_LKUP:
-        print(f'LOCALITY_LKUP loaded ')
-    else:
-        print(f'LOCALITY_LKUP fail !!!!!!')
+    batchsize = 100000
 
-    addName_lkup = load_additional_name_lkup()
-    if addName_lkup:
-        print(f'addName_lkup loaded ')
-    else:
-        print(f'addName_lkup fail !!!!!!')
+    SESAR_USER_LKUP = {}
+    SESAR_USER_LKUP = load_lkup('SESAR_USER_LKUP',load_sesar_user_lkup)
 
-    relres_lkup = load_related_resource_lkup()
-    if relres_lkup:
-        print(f'relres_lkup loaded ')
-    else:
-        print(f'relres_lkup fail !!!!!!')
+    INIT_LKUP = {}
+    INIT_LKUP = load_lkup('INIT_LKUP',load_initiative_lkup)
+
+    COLLECTOR_LKUP = {}
+    COLLECTOR_LKUP = load_lkup('COLLECTOR_LKUP',load_collector_lkup)
+
+    ARCHIVE_LKUP = {}
+    ARCHIVE_LKUP = load_lkup('ARCHIVE_LKUP', load_archive_lkup)
+
+    LOCALITY_LKUP = {}
+    LOCALITY_LKUP = load_lkup('LOCALITY_LKUP',  load_locality_lkup)
+
+    addName_lkup = {}
+    addName_lkup = load_lkup('addName_lkup',load_additional_name_lkup)
+
+    relres_lkup = {}
+    relres_lkup = load_lkup('relres_lkup',load_related_resource_lkup)
+
     end_time = time.time()
     execution_time = (end_time - start_time)
     LOGGER.info(f"load lookups for sample loop execution time: {execution_time} seconds")
@@ -867,13 +868,13 @@ def load_samples(g, concept_lkup, agent_lkup):
          sample_max_id = 0
 
     #max_id = 0  # starting value
-    max_id = 3234568  # starting value
+    max_id = 4234568  # starting value
     insertDict = {}
     while True:
         selectRecordQuery = 'SELECT * FROM public.' + tableName + ' where sample_id > ' + str(max_id) + \
                             '  order by sample_id ' + \
                             '  LIMIT ' + str(batchsize) + ';'
-        LOGGER.debug("get_sample_data record query: ", repr(selectRecordQuery))
+        LOGGER.info(f"get_sample_data record query: {repr(selectRecordQuery)}")
         try:
             data = executeQuery(newDb, selectRecordQuery)
         except:
@@ -1022,7 +1023,7 @@ def load_samples(g, concept_lkup, agent_lkup):
             LOGGER.debug(f"total for{str(theobj['sample_id'])}: {execution_time} milliseconds")
 
             therow += 1
-            writebatchsize = 100
+            writebatchsize = 10000
             if therow % writebatchsize == 0:
                 writeduckdb(g,insertDict)
                 insertDict = {}
@@ -1034,8 +1035,8 @@ def load_samples(g, concept_lkup, agent_lkup):
                 rept_time = time.time()
 
         LOGGER.info(f'load iteration done. max_id: {max_id}')
-        #if max_id == sample_max_id:
-        if therow >= 1000:
+        if max_id == sample_max_id:
+        #if therow >= 1000:
             print(f'load sample loop done. break')
             break
     return 1
@@ -1048,8 +1049,8 @@ def get_record(g, pid):
 
 
 def main(dest: str = None):
-    loadvocabs = True
-    loadtables = True
+    loadvocabs = False
+    load_agent_lkup = False
     loadsamples = True
     tstart_time = time.time()
 
@@ -1109,18 +1110,37 @@ def main(dest: str = None):
                           'SESAR Spatial Reference Systems', '', 'spatial_ref_id'])
 
         for vocab in vocablist:
-            result = load_vocab_table(g, vocab, concept_lkup)
-            print(f'{vocab[0]} loaded')
+            result = load_concept_lkup(vocab, concept_lkup)
+            print(f'vocabulary {vocab[0]} loaded')
 
+        result = load_material_type(concept_lkup)
+        print(f'material type loaded {result}')
+
+        with open('concept_lkup.pkl', 'wb') as file:
+            pickle.dump(concept_lkup, file)
+    else:   #load the cached lookup file
+        try:
+            with open('concept_lkup.pkl', 'rb') as file:
+                concept_lkup = pickle.load(file)
+        except Exception as e:
+            print(f'cached concept_lkup file needs to be created, make loadvocabs TRUE')
+            exit()
 
     agent_lkup = {}
-    if loadtables:
-        result = load_material_type(g,concept_lkup)
-        print(f'material type loaded {result}')
-        result = load_individuals(g, agent_lkup)
-        print(f'individuals loaded {result}')
-        result = load_institution(g, agent_lkup)
-        print(f'institution loaded {result}')
+    if load_agent_lkup:
+        result = load_individuals(agent_lkup)
+        print(f'individuals in agent_lkup loaded {result}')
+        result = load_institution(agent_lkup)
+        print(f'institution in agent_lkup loaded {result}')
+        with open('agent_lkup.pkl', 'wb') as file:
+            pickle.dump(agent_lkup, file)
+    else:   #load the cached lookup file
+        try:
+            with open('agent_lkup.pkl', 'rb') as file:
+                agent_lkup = pickle.load(file)
+        except Exception as e:
+            print(f'cached agent_lkup file needs to be created, make load_agent_lkup TRUE')
+            exit()
 
     if loadsamples:
         load_samples(g, concept_lkup, agent_lkup)

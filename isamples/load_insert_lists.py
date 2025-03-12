@@ -4,7 +4,7 @@ import datetime
 from __init__ import *
 from pqg.common import *
 from pqg.pqg_singletable import *
-from line_profiler import profile
+#from line_profiler import profile
 
 LOGGER = logging.getLogger('insertlist')
 
@@ -64,7 +64,7 @@ def get_testrecord()->MaterialSampleRecord:
                 altids=None, s=None, p=None, o=None, n=None)
     return testrecord
 
-@profile
+#@profile
 def addNodeToList(g, o:pqg.common.IsDataclass,insertDict:dict) -> str:
     '''
     insert dict structure:
@@ -117,6 +117,7 @@ def addNodeToList(g, o:pqg.common.IsDataclass,insertDict:dict) -> str:
 
     return s_pid
 
+#@profile
 def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict:dict) -> str:
         """
         Add a new entry in values list for  the node table or update a row if it already exists.
@@ -126,14 +127,14 @@ def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict
             pid:str = data[g._node_pk]
         except KeyError:
             raise ValueError("pid cannot be None")
-        ne = g.nodeExists(pid)      #check if pid is already in database
 
+        #ne = g.nodeExists(pid)      #check if pid is already in database
+        ne = None       # skip the exists check, use INSERT or REPLACE in the sql to handl existing.
         #check if pid is already in insert dict
 
 
         if ne is not None:
             # update the existing entry
-            #_L.warning("Update entry not implemented yet.")
             return pid
         else:
             try:
@@ -197,6 +198,7 @@ def addNodeEntryList(g, otype:str, data:typing.Dict[str, typing.Any], insertDict
         return pid
 
 
+#@profile
 def addEdgeToList(g, edge: Edge, insertDict) -> str:
         """Adds an edge.
 
@@ -205,13 +207,22 @@ def addEdgeToList(g, edge: Edge, insertDict) -> str:
         """
         _L = getLogger()
         _L.debug("addEdge: %s", edge.pid)
-        existing = None
-        if edge.pid is None:
-            existing = getEdge(g=g, s=edge.s, p=edge.p, o=edge.o, n=edge.n)
-        else:
-            existing = getEdge(g=g, pid=edge.pid)
-        if existing is not None:
-            return existing.pid
+        # existing = None  # smr 2025-03-12 the sql queries here slow it all down
+                            # so use INSERT or UPDATE in SQL to handle ones that are already there
+        # if edge.pid is None:
+        #     existing = getEdge(g=g, s=edge.s, p=edge.p, o=edge.o, n=edge.n)
+        # else:
+        #     existing = getEdge(g=g, pid=edge.pid)
+        # if existing is not None:
+        #     return existing.pid
+
+        try:
+            pidindex = insertDict['_edge_']['fieldList'].split(", ").index('pid')
+            pidlist = list(set(sublist[pidindex] for sublist in insertDict['_edge_']['valuesList']))
+            if edge.pid in pidlist:  # don't add to insert list if we already have this one one the list
+                return edge.pid
+        except:
+            pass
 
         vlist = [edge.pid, '_edge_', edge.s,  edge.p,   edge.o,  edge.n,   edge.altids, None]
         valuestuple = tuple(vlist )
@@ -259,6 +270,7 @@ def getEdge( g,
         return Edge(**data)
 
 
+#@profile
 def writeduckdb(g, insertDict:dict):
     for key in sorted(insertDict.keys()):   # do edges last
         thefields = insertDict[key]['fieldList']
@@ -266,7 +278,7 @@ def writeduckdb(g, insertDict:dict):
 
         with g.getCursor() as csr:
             try:
-                thesql = f"INSERT OR REPLACE INTO {g._table} ({thefields}) VALUES ({', '.join(['?',]*len(thevalues[0]))})"
+                thesql = f"INSERT OR IGNORE INTO {g._table} ({thefields}) VALUES ({', '.join(['?',]*len(thevalues[0]))})"
                 if key != '_edge_' and 'geometry' in thefields:
                         thesql = thesql[:-7] + ", ST_POINT(?,?) )"
                 csr.executemany(thesql,thevalues)
