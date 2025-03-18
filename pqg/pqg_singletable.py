@@ -284,24 +284,28 @@ class PQG:
             self._literal_field_names.append(field[0])
         self._literal_field_names += list(self._edgefields)
         sql = []
+        # references node creates fk constraints that might be bottlenecks
+        # s VARCHAR REFERENCES node (pid) DEFAULT NULL,
+        # o VARCHAR REFERENCES node (pid) DEFAULT NULL,
         sql.append(f"""CREATE TABLE IF NOT EXISTS {self._table} (
             pid VARCHAR PRIMARY KEY,
             tcreated INTEGER DEFAULT {self._default_timestamp},
             tmodified INTEGER DEFAULT {self._default_timestamp},
             otype VARCHAR,
-            s VARCHAR REFERENCES node (pid) DEFAULT NULL,
+            s VARCHAR DEFAULT NULL,
             p VARCHAR DEFAULT NULL,
-            o VARCHAR REFERENCES node (pid) DEFAULT NULL,
+            o VARCHAR DEFAULT NULL,
             n VARCHAR DEFAULT NULL,
             altids VARCHAR[] DEFAULT NULL,
             geometry GEOMETRY DEFAULT NULL,
             {', '.join(all_fields)}
         );""")
-        sql.append(f"CREATE INDEX IF NOT EXISTS node_otype ON {self._table} (otype);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_s ON {self._table} (s);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_p ON {self._table} (p);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_o ON {self._table} (o);")
-        sql.append(f"CREATE INDEX IF NOT EXISTS edge_n ON {self._table} (n);")
+        # for column oriented db, indexes don't apparently help much
+        # sql.append(f"CREATE INDEX IF NOT EXISTS node_otype ON {self._table} (otype);")
+        # sql.append(f"CREATE INDEX IF NOT EXISTS edge_s ON {self._table} (s);")
+        # sql.append(f"CREATE INDEX IF NOT EXISTS edge_p ON {self._table} (p);")
+        # sql.append(f"CREATE INDEX IF NOT EXISTS edge_o ON {self._table} (o);")
+        # sql.append(f"CREATE INDEX IF NOT EXISTS edge_n ON {self._table} (n);")
         _L = getLogger()
         with self.getCursor() as csr:
             # Create the database structure
