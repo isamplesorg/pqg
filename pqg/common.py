@@ -1,4 +1,3 @@
-
 import dataclasses
 import datetime
 import decimal
@@ -26,6 +25,7 @@ LinkmlOptionalStringList = typing.Union[str, typing.List[str], None]
 LinkmlBoolean = typing.Union[bool, linkml_runtime.utils.metamodelcore.Bool, None]
 LinkmlDateTime = typing.Union[str, linkml_runtime.utils.metamodelcore.XSDDateTime]
 
+
 def getUnixTimestamp():
     return int(time.time())
 
@@ -39,6 +39,7 @@ class JSONDateTimeEncoder(json.JSONEncoder):
 
     e.g. json.dumps(o, cls=JSONDateTimeEncoder)
     """
+
     def default(self, o: typing.Any) -> typing.Any:
         if isinstance(o, datetime.datetime):
             # Force use of timezone
@@ -53,7 +54,7 @@ class IsDataclass(typing.Protocol):
     __dataclass_fields__: typing.ClassVar[typing.Dict[str, typing.Any]]
 
 
-def fieldUnion(cls:IsDataclass) -> typing.Set[dataclasses.Field]:
+def fieldUnion(cls: IsDataclass) -> typing.Set[dataclasses.Field]:
     """Rec"""
     fields = set()
     for field in dataclasses.fields(cls):
@@ -64,12 +65,13 @@ def fieldUnion(cls:IsDataclass) -> typing.Set[dataclasses.Field]:
     return fields
 
 
-def simpleFields(cls:IsDataclass) ->typing.List[dataclasses.Field]:
+def simpleFields(cls: IsDataclass) -> typing.List[dataclasses.Field]:
     fields = []
     for field in dataclasses.fields(cls):
         if not dataclasses.is_dataclass(field.type):
             fields.append(field)
     return fields
+
 
 def typeish(t: type):
     kinds = (bool, int, str, float, datetime.datetime, decimal.Decimal)
@@ -88,13 +90,13 @@ def typeish(t: type):
     return None
 
 
-def listish(t: type)-> bool:
+def listish(t: type) -> bool:
     if t is None:
         return False
-    if t == list:
+    if isinstance(t, list):
         return True
     else:
-        if typing.get_origin(t) == list:
+        if isinstance(typing.get_origin(t), list):
             return True
         for tt in typing.get_args(t):
             res = listish(tt)
@@ -103,12 +105,12 @@ def listish(t: type)-> bool:
     return False
 
 
-def dataclassish(t: type)->bool:
+def dataclassish(t: type) -> bool:
     if t is None:
         return False
     if dataclasses.is_dataclass(t):
         return True
-    if t == dict:
+    if isinstance(t, dict):
         return True
     if dataclasses.is_dataclass(typing.get_origin(t)):
         return True
@@ -143,7 +145,7 @@ def typeToSQL(t: type) -> typing.Optional[str]:
     return sql_type
 
 
-def fieldToSQLCreate(f:dataclasses.Field, primary_key_field:str="pid") -> str:
+def fieldToSQLCreate(f: dataclasses.Field, primary_key_field: str = "pid") -> str:
     """Get the SQL create fragment for a field of a dataclass.
 
     Raises a ValueError if the field type can not be mapped.
@@ -162,14 +164,16 @@ def fieldToSQLCreate(f:dataclasses.Field, primary_key_field:str="pid") -> str:
     return v
 
 
-def fieldsToSQLCreate(fields:typing.Set[dataclasses.Field], primary_key_field:str) -> str:
+def fieldsToSQLCreate(
+    fields: typing.Set[dataclasses.Field], primary_key_field: str
+) -> str:
     _sql = []
     for field in fields:
         _sql.append(fieldToSQLCreate(field, primary_key_field))
     return ",\n".join(_sql)
 
 
-def fieldsToSQLSelect(fields:typing.Set[dataclasses.Field]) -> str:
+def fieldsToSQLSelect(fields: typing.Set[dataclasses.Field]) -> str:
     _sql = []
     for field in fields:
         if not dataclasses.is_dataclass(field.type):

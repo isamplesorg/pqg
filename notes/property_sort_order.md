@@ -15,7 +15,7 @@ class Publication
     pid: str
     title: str
     authors: list[str]
-    
+
 class Author
     pid: str
     name: str
@@ -38,7 +38,7 @@ class Author
     name: Mary
 }
 
-{   
+{
     otype: Author,
     pid: author_2,
     name: Frank
@@ -48,7 +48,6 @@ class Author
 ```
 otype       pid         name    title   authors
 Author      author_1    Mary
-Author      author_2    Frank   
-Publication pub_1               Pub One [author_1, author_2]   
+Author      author_2    Frank
+Publication pub_1               Pub One [author_1, author_2]
 ```
-

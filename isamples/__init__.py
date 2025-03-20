@@ -63,16 +63,18 @@ class MaterialSampleCuration(pqg.Base, generated.MaterialSampleCuration):
 
 def createGraph(dbinstance):
     g = pqg.PQG(dbinstance)
-    g.initialize(classes=[
-        Agent,
-        IdentifiedConcept,
-        GeospatialCoordLocation,
-        SamplingSite,
-        SamplingEvent,
-        MaterialSampleCuration,
-        SampleRelation,
-        MaterialSampleRecord,
-    ])
+    g.initialize(
+        classes=[
+            Agent,
+            IdentifiedConcept,
+            GeospatialCoordLocation,
+            SamplingSite,
+            SamplingEvent,
+            MaterialSampleCuration,
+            SampleRelation,
+            MaterialSampleRecord,
+        ]
+    )
     return g
 
 

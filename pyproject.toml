@@ -23,6 +23,11 @@ dependencies = [
     "rustworkx>=0.16.0",
 ]
 
+[tool.ruff]
+exclude = [
+    "generated"
+]
+
 [project.scripts]
 pqg = 'pqg.__main__:cli'
 
