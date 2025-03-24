@@ -17,6 +17,7 @@ from pqg import __version__
 _DBMS_ = duckdb
 #_DBMS_ = sqlite3
 
+DEFAULT_PARQUET_GROUP_SIZE = 122880
 
 def getLogger():
     return logging.getLogger("pqg")
@@ -121,6 +122,7 @@ class PQG:
             source: pqg.common.OptionalStr=None, 
             primary_key_field:str=None
         ) -> None:
+        _L = getLogger()
         self._isparquet = False
         self._default_timestamp = "epoch(current_timestamp)::integer"
         if _DBMS_ == sqlite3:
@@ -131,16 +133,17 @@ class PQG:
         self.geometry_x_field = "longitude"
         self.geometry_y_field = "latitude"
         self._pidcache = {}
+        self._source = None
         if source is not None:
-            source = source.strip()
-            if source.endswith(".parquet"):
-                source = f"read_parquet('{source}')"
-            if source.startswith("read_parquet("):
+            self._source = source.strip()
+            if self._source.endswith(".parquet"):
+                self._source = f"read_parquet('{self._source}')"
+            if self._source.startswith("read_parquet("):
                 self._isparquet = True
 
         # Name of the source table in the data store
         self._table = "node"
-        if source is not None:
+        if source is not None and not self._isparquet:
             self._table = source
         # Name of the primary key column for rows.
         # This is consistent across all nodes and edges in the graph.
@@ -152,6 +155,10 @@ class PQG:
         # Fields that are in edge records
         self._edgefields = ('pid', 'otype', 's', 'p', 'o', 'n', 'altids', 'geometry', )
         self._literal_field_names = []
+        _L.debug("table = %s", self._table)
+        _L.debug("source = %s", self._source)
+        _L.debug("isParquet = %s", self._isparquet)
+
 
     @contextlib.contextmanager
     def getCursor(self, as_dict:bool=False):
@@ -225,9 +232,9 @@ class PQG:
 
     def loadMetadataParquet(self):
         if not self._isparquet:
-            raise ValueError(f"Not a parquet source {self._table}")
+            raise ValueError(f"Not a parquet source {self._source}")
         _L = getLogger()
-        kv_source = self._table.replace("read_parquet(", "parquet_kv_metadata(", 1)
+        kv_source = self._source.replace("read_parquet(", "parquet_kv_metadata(", 1)
         version = None
         with self.getCursor() as csr:
             results = csr.execute(f"SELECT * FROM {kv_source} WHERE decode(key) LIKE 'pqg_%'").fetchall()
@@ -243,14 +250,18 @@ class PQG:
                     self._edgefields = json.loads(row[2].decode("utf-8"))
                 elif k == 'pqg_literal_fields':
                     self._literal_field_names = json.loads(row[2].decode("utf-8"))
+            # Create a view to reference the parquet file
+            sql = f"CREATE VIEW {self._table} AS SELECT * FROM {self._source};"
+            csr.sql(sql)
         if version != __version__:
             _L.warning("Source version of %s different to current of %s", version, __version__)
+        
     
     def loadMetadata(self):
         if self._isparquet:
             self.loadMetadataParquet()
         else:
-            self.loadMetadataSql
+            self.loadMetadataSql()
 
     def initialize(self, classes:typing.List[pqg.common.IsDataclass]):
         """
@@ -397,11 +408,13 @@ class PQG:
         return pid
 
     def getNodeEntry(self, pid:str)-> typing.Dict[str, typing.Any]:
+        _L = getLogger()
         ne = self.nodeExists(pid)
         if ne is None:
             raise ValueError(f"Entry not found for pid = {pid}")
         _fields = [self._node_pk, ] + list(self._types[ne[1]].keys())
         sql = f"SELECT {', '.join(_fields)} FROM {self._table} WHERE {self._node_pk} = ?"
+        _L.debug(sql)
         with self.getCursor() as csr:
             values = csr.execute(sql, [pid]).fetchone()
             return dict(zip(_fields, values))
@@ -525,25 +538,29 @@ class PQG:
         self._connection.commit()
         return result
 
-    def getNode(self, pid:str)->typing.Dict[str, typing.Any]:
+    def getNode(self, pid:str, max_depth:int=10, _depth:int=0)->typing.Dict[str, typing.Any]:
         # Retrieve graph of object referenced by pid
         # reconstruct object from the list of node entries
         # ? can we construct a JSON representation of the object using CTE
+        _L = getLogger()
+        _L.debug("getNode pid= %s", pid)
         data = self.getNodeEntry(pid)
-        with self.getCursor() as csr:
-            sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
-            edges = csr.execute(sql, [pid]).fetchall()
-            for edge in edges:
-                # Handle multiple values for related objects.
-                # Convert entry to a list if another value is found
-                if data.get(edge[0]) is not None:
-                    if isinstance(data[edge[0]], list):
-                        data[edge[0]].append(edge[1])
+        if _depth < max_depth:
+            with self.getCursor() as csr:
+                sql = f"SELECT p, o FROM {self._table} WHERE otype='_edge_' AND s = ?"
+                _L.debug(sql)
+                results = csr.execute(sql, [pid])
+                while edge := results.fetchone():
+                    # Handle multiple values for related objects.
+                    # Convert entry to a list if another value is found
+                    if data.get(edge[0]) is not None:
+                        if isinstance(data[edge[0]], list):
+                            data[edge[0]].append(edge[1])
+                        else:
+                            _tmp = data[edge[0]]
+                            data[edge[0]] = [_tmp, self.getNode(edge[1],_depth=_depth+1)]
                     else:
-                        _tmp = data[edge[0]]
-                        data[edge[0]] = [_tmp, self.getNode(edge[1])]
-                else:
-                    data[edge[0]] = self.getNode(edge[1])
+                        data[edge[0]] = self.getNode(edge[1], _depth=_depth+1)
         return data
 
     def getNodeIds(self, pid:str)->typing.Set[str]:
@@ -559,17 +576,24 @@ class PQG:
                 result = result.union(self.getNodeIds(edge[1]))
         return result
 
-    def getIds(self)->typing.Iterator[typing.Tuple[str, str]]:
+    def getIds(self, otype:typing.Optional[str]=None, maxrows:int=0)->typing.Iterator[typing.Tuple[str, str]]:
         batch_size = 100
+        sql = f"SELECT otype, pid FROM {self._table}"
+        params = []
+        if otype is not None:
+            sql += " WHERE otype=?"
+            params.append(otype)
+        if maxrows > 0:
+            sql += f" LIMIT {maxrows}"
         with self.getCursor() as csr:
-            result = csr.sql(f"SELECT otype, pid FROM {self._table};")
+            result = csr.execute(sql, params)
             while batch := result.fetchmany(size=batch_size):
                 for row in batch:
                     yield row[0], row[1]
 
     def objectCounts(self)->typing.Iterator[typing.Tuple[str, int]]:
         with self.getCursor() as csr:
-            result = csr.execute(f"SELECT otype, count(*) AS n FROM {self._table} WHERE otype !='_edge_' GROUP BY otype")
+            result = csr.execute(f"SELECT otype, count(*) AS n FROM {self._table} GROUP BY otype")
             while row := result.fetchone():
                 yield row[0], row[1]
 
@@ -621,8 +645,10 @@ class PQG:
         dest.append("}")
         return dest
 
-    def asParquet(self, dest_base_name: pathlib.Path):
+    def asParquet(self, dest_base_name: pathlib.Path, group_size:int=DEFAULT_PARQUET_GROUP_SIZE):
         _L = getLogger()
+        if group_size < 2048:
+            group_size = 2048
         node_dest = dest_base_name.parent/f"{dest_base_name.stem}.parquet"
         # COPY (SELECT * FROM ps ORDER BY 
         #   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))
@@ -631,7 +657,7 @@ class PQG:
         # This will have a performance hit on write, but should both decrease file size and
         # significantly improve performance of reads in a spatial context
         with self.getCursor() as csr:
-            sql = f"COPY (SELECT * FROM {self._table} ORDER BY ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))))"
+            sql = f"COPY (SELECT * FROM {self._table} ORDER BY otype, pid, ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(-180, -90, 180, 90))))"
             #sql = f"COPY (SELECT * FROM {self._table})"
             sql += f" TO '{node_dest}' (FORMAT PARQUET, KV_METADATA "
             sql += "{" 
@@ -640,11 +666,27 @@ class PQG:
             sql += f"pqg_node_types:'{json.dumps(self._types)}', "
             sql += f"pqg_edge_fields:'{json.dumps(self._edgefields)}', "
             sql += f"pqg_literal_fields:'{json.dumps(self._literal_field_names)}'" 
-            sql += "});"
+            sql += "}"
+            sql += f", ROW_GROUP_SIZE {group_size});"
             print(sql)
             csr.execute(sql)
 
-    def getRootsForPid(
+    def getRootsForPid(self, pid: str) -> typing.Iterator[typing.Tuple[str]]:
+        """
+        Yields s, p where o=pid, recursively to yield parent references.
+        """
+        sql = f"""WITH RECURSIVE s_of AS (
+        SELECT s,p, 0 AS depth FROM {self._table} WHERE o=?
+        UNION ALL SELECT n.s, n.p, depth+1 FROM {self._table} AS n, s_of WHERE n.o = s_of.s
+        ) SELECT * FROM s_of"""
+        _L = getLogger()
+        _L.debug(sql)
+        with self.getCursor() as csr:
+            result = csr.execute(sql, [pid, ])
+            while row := result.fetchone():
+                yield row
+
+    def getRootsXForPid(
             self,
             pids: typing.List[str],
             target_type: pqg.common.OptionalStr=None,
@@ -692,10 +734,8 @@ class PQG:
         _L.debug("getRootsForPid: %s", sql)
         with self.getCursor() as csr:
             result = csr.execute(sql, params)
-            row = result.fetchone()
-            while row is not None:
+            while row := result.fetchone():
                 yield row
-                row = result.fetchone()
 
     def breadthFirstTraversal(self, pid:str) -> typing.Iterator[typing.Tuple[str, int]]:
         """Recursively yields (identifier, depth) of objects that are objects of pid or related.
@@ -716,14 +756,11 @@ class PQG:
         ) SELECT s, p, o, depth FROM edge_for;
         """
         L = getLogger()
-        L.info(sql)
+        L.debug(sql)
         with self.getCursor() as csr:
             result = csr.execute(sql, params)
-            row = result.fetchone()
-            while row is not None:
+            while row := result.fetchone():
                 yield row
-                row = result.fetchone()
-
 
 
     def objectsAtPath(self, path:typing.List[str])->typing.Iterator[str]:
