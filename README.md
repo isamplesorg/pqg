@@ -63,7 +63,7 @@ Using `uv`:
 ```
 git clone https://github.com/isamplesorg/pqg.git
 cd pqg
-uv install
+uv sync
 
 uv run pqg --help
 ```
