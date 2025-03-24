@@ -4,13 +4,8 @@ save as Parquet file.
 based on Code by Dave Vieglais
 Modified for SESAR by SM Richard 2025-02-28
 """
-
-# import json
-# import pathlib
-# import typing
-# import pqg
-# from isamples import *
-# import time
+import io
+import json
 import psycopg2
 import hashlib
 from shapely import wkt
@@ -30,7 +25,9 @@ LOGGER = logging.getLogger('sesarParquet')
 INSERTTEMPLATE = {}
 INSERT_VALS = []
 AGENT_PID_LKUP = {}
-#test_vals = []
+
+
+# test_vals = []
 
 
 # SESAR_USER_LKUP = {}
@@ -44,7 +41,7 @@ AGENT_PID_LKUP = {}
 def get_2025Connection() -> psycopg2.extensions.connection | None:
     try:
         return psycopg2.connect(
-            database="SESAR2025",
+            database="SESAR2025bku",
             user="postgres",
             password="smrpostgis",
             host="127.0.0.1",
@@ -111,9 +108,17 @@ def write_json_lines(data, filename):
                 f.write('\n')
 
 
+def write_json_lines_fast(data, filename):
+    with open(filename, 'w', buffering=io.DEFAULT_BUFFER_SIZE) as f:
+        f.writelines(json.dumps(entry) + '\n' for entry in data if entry.get('pid') is not None)
+
+
+# def get_blank_insert():
+#     theblank = copy.deepcopy(INSERTTEMPLATE)
+#     return theblank
+
 def get_blank_insert():
-    theblank = copy.deepcopy(INSERTTEMPLATE)
-    return theblank
+    return dict.fromkeys(INSERTTEMPLATE, None)
 
 
 def executeQuery(conn, querystring):
@@ -264,7 +269,7 @@ def load_material_type(concept_lkup):
             scheme_uri=theobj['scheme_uri'],
             altids=[f"{abbrev}.{str(theobj['material_type.material_type_id'])}"]
         )
-        concept_lkup[abbrev + '.' + str(theobj['material_type.material_type_id'])] = {'flag':False, 'obj':theConcept}
+        concept_lkup[abbrev + '.' + str(theobj['material_type.material_type_id'])] = {'flag': False, 'obj': theConcept}
 
         # insert_val = get_blank_insert()
         # insert_val['otype'] = 'IdentifiedConcept',
@@ -338,7 +343,7 @@ def load_individuals(agent_lkup):
             role='',
             altids=[f"{abbrev}.{str(theobj['individual_id'])}"]
         )
-        agent_lkup[abbrev + '.' + str(theobj['individual_id'])] = {'flag': False,'obj': theagent}
+        agent_lkup[abbrev + '.' + str(theobj['individual_id'])] = {'flag': False, 'obj': theagent}
 
     end_time = time.time()
     execution_time = end_time - start_time
@@ -394,7 +399,7 @@ def load_institution(agent_lkup):
             role='',
             altids=[f"{abbrev}.{str(theobj['institution_id'])}"]
         )
-        agent_lkup[abbrev + '.' + str(theobj['institution_id'])] = {'flag': False,'obj': theagent}
+        agent_lkup[abbrev + '.' + str(theobj['institution_id'])] = {'flag': False, 'obj': theagent}
 
     end_time = time.time()
     execution_time = end_time - start_time
@@ -417,6 +422,7 @@ def add_agent(theagent):
     except Exception as e:
         LOGGER.info(f"add agent fail, {theagent['pid']}, e: {repr(e)}")
         return None
+
 
 # def load_agent_altid_pid_lkup(agent_lkup) -> dict:
 #     agent_altid_pid_lkup = {}
@@ -451,7 +457,7 @@ def load_related_resource_lkup():
         if theobj['sample_id'] is not None:  # skip if no relationships from the sample
             try:
                 thesamplerel = SampleRelation(
-                    pid=f"rel.{str(theobj['relation_id'])}",
+                    pid=f"{abbrev}.{str(theobj['relation_id'])}",
                     target=theobj['related_resource_uri'],
                     description='',
                     label="child of " + str(theobj['related_resource_uri']),
@@ -531,7 +537,6 @@ def load_locality_lkup():
     return locality_lookup
 
 
-
 def load_collector_lkup() -> dict | None:
     start_time = time.time()  # time the function execution
     # individuals are loaded into Agent nodes
@@ -605,7 +610,7 @@ def load_archive_lkup() -> dict | None:
 
 
 def load_initiative_lkup():
-    # initiatives (projects, cruises, field programs, etc. are represented in iSamples
+    # initiatives (projects, cruises, field programs, etc.) are represented in iSamples
     #   with text descriptions. SESAR does not provide identifiers for initiatives....
     start_time = time.time()  # time the function execution
     tableName = 'initiative'
@@ -675,7 +680,7 @@ def load_sesar_user_lkup() -> dict | None:
     return sesaruserlkup
 
 
-def get_GeospatialCoordLocation(theobj, concept_lkup, gcvalues) -> GeospatialCoordLocation | None:
+def get_GeospatialCoordLocation(theobj, concept_lkup) -> GeospatialCoordLocation | None:
     lat = theobj['latitude']
     long = theobj['longitude']
     elev = theobj['elevation']
@@ -723,7 +728,7 @@ def get_GeospatialCoordLocation(theobj, concept_lkup, gcvalues) -> GeospatialCoo
                 verticalpos = None
 
         gcpid = f"urn:local:geo.{str(theobj['sample_id'])}"
-#        gcvalues.append((gcpid, lat, long, False, verticalpos))
+        #        gcvalues.append((gcpid, lat, long, False, verticalpos))
 
         try:
             if (isinstance(lat, numbers.Number)) and (isinstance(long, numbers.Number)):
@@ -799,7 +804,7 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
         try:
             theitem = concept_lkup['sam.' + str(theobj['collection_method_id'])]
             theconcept = theitem['obj']
-            if theitem['flag'] == False:
+            if not theitem['flag']:
                 result = add_concept(theconcept)
                 if result is not None:
                     concept_lkup['sam.' + str(theobj['collection_method_id'])]['flag'] = True
@@ -814,7 +819,7 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
         if theobj['platform_id'] is not None:
             theitem = concept_lkup['pla.' + str(theobj['platform_id'])]
             theconcept = theitem['obj']
-            if theitem['flag'] == False:
+            if not theitem['flag']:
                 result = add_concept(theconcept)
                 if result is not None:
                     concept_lkup['pla.' + str(theobj['platform_id'])]['flag'] = True
@@ -825,7 +830,7 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
         if theobj['launch_platform_id'] is not None:
             theitem = concept_lkup['pla.' + str(theobj['launch_platform_id'])]
             theconcept = theitem['obj']
-            if theitem['flag'] == False:
+            if not theitem['flag']:
                 result = add_concept(theconcept)
                 if result is not None:
                     concept_lkup['pla.' + str(theobj['platform_id'])]['flag'] = True
@@ -839,7 +844,7 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
     if theobj['sampled_feature_type_id'] is not None:
         theitem = concept_lkup['sft.' + str(theobj['sampled_feature_type_id'])]
         theconcept = theitem['obj']
-        if theitem['flag'] == False:
+        if not theitem['flag']:
             result = add_concept(theconcept)
             if result is not None:
                 concept_lkup['sft.' + str(theobj['sampled_feature_type_id'])]['flag'] = True
@@ -850,7 +855,7 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
         for collector in COLLECTOR_LKUP['sam.' + str(theobj['sample_id'])]:
             agent_lkup[collector]['obj']['role'] = 'collector'
             thecollectors.append(agent_lkup[collector]['obj'])
-            if collector['flag'] == False:
+            if not collector['flag']:
                 result = add_agent(collector['obj'])
                 if result is not None:
                     agent_lkup[collector]['flag'] = True
@@ -895,8 +900,6 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
     end_time = time.time()
     execution_time = end_time - start_time
     LOGGER.debug(f"Sampling Event execution time: {execution_time} seconds")
-    gcvalues = []
-
     if len(collectionDesc) == 0:
         collectionDesc = None
 
@@ -909,9 +912,9 @@ def get_SamplingEvent(g, theobj, COLLECTOR_LKUP, LOCALITY_LKUP, INIT_LKUP, conce
     insert_val['label'] = thelabel
     insert_val['project'] = theprj
     insert_val['result_time'] = thetime
-    INSERT_VALS.append(insert_val)       #Sampling Event
+    INSERT_VALS.append(insert_val)  # Sampling Event
 
-    sampleloc = get_GeospatialCoordLocation(theobj, concept_lkup, gcvalues)
+    sampleloc = get_GeospatialCoordLocation(theobj, concept_lkup)
     if sampleloc is not None:
         # add edge to link location to sampleingevent
         insert_val = get_edge_insert_val('_edge_', eventpid, 'sample_location', sampleloc['pid'])
@@ -996,9 +999,9 @@ def get_SamplingSite(theobj, LOCALITY_LKUP, concept_lkup) -> SamplingSite:
     insert_val['description'] = thedesc
     insert_val['label'] = locname
     insert_val['place_name'] = theplaces
-    #insert_val['site_location'] = None
+    # insert_val['site_location'] = None
     insert_val['is_part_of'] = None
-    INSERT_VALS.append(insert_val)      #sampling site
+    INSERT_VALS.append(insert_val)  # sampling site
 
     # site_location is an edge, but for this mapping, populate location on samplingEvent
     #  site_location would be for more precise location with context of samplingEvent/location
@@ -1026,7 +1029,7 @@ def get_MaterialSampleCuration(g, theobj, SESAR_USER_LKUP, agent_lkup) -> Materi
         theitem = agent_lkup[thepid]
         theowner = theitem['obj']
         theowner['role'] = 'owner'
-        if theitem['flag'] == False:
+        if not theitem['flag']:
             result = add_agent(theowner)
             if result is not None:
                 agent_lkup[thepid]['flag'] = True
@@ -1092,11 +1095,7 @@ def load_samples(g, concept_lkup, agent_lkup):
     LOCALITY_LKUP = load_lkup('LOCALITY_LKUP', load_locality_lkup)
     addName_lkup = load_lkup('addName_lkup', load_additional_name_lkup)
 
-
     relres_lkup = load_lkup('relres_lkup', load_related_resource_lkup)
-
-
-
 
     end_time = time.time()
     execution_time = (end_time - start_time)
@@ -1153,8 +1152,8 @@ def load_samples(g, concept_lkup, agent_lkup):
                     thepid = SESAR_USER_LKUP[str(theobj['cur_registrant_id'])]
                     theitem = agent_lkup[thepid]
                     theregistrant = theitem['obj']
-                    theregistrant['role'] = 'registrant' # this will only catch first role if agent
-                                                            # plays multiple roles
+                    theregistrant['role'] = 'registrant'  # this will only catch first role if agent
+                    # plays multiple roles
                     if theitem['flag'] == False:
                         result = add_agent(theregistrant)
                         if result is not None:
@@ -1188,7 +1187,7 @@ def load_samples(g, concept_lkup, agent_lkup):
             if theobj['numeric_age_unit'] is not None:
                 samdesc += " Age units " + theobj['numeric_age_unit']
             if theobj['age_qualifier'] is not None:
-                samdesc += ", Age qualitifer: " + theobj['age_qualifier']
+                samdesc += ", Age qualifier: " + theobj['age_qualifier']
 
             thekeywords = []
             if theobj['geologic_unit'] is not None:
@@ -1242,7 +1241,7 @@ def load_samples(g, concept_lkup, agent_lkup):
                     insert_val['label'] = rel['label']
                     insert_val['relationship'] = 'has parent material sample'
                     INSERT_VALS.append(insert_val)
-            except :
+            except:
                 therels = None
 
             try:
@@ -1280,27 +1279,6 @@ def load_samples(g, concept_lkup, agent_lkup):
                                                  agent_lkup),
             if len(samdesc) == 0:
                 samdesc = None
-
-            # ms = MaterialSampleRecord(
-            #     pid=sampid,
-            #     alternate_identifiers=addnames,
-            #     complies_with=None,
-            #     curation=theCuration,
-            #     dc_rights=None,
-            #     description=samdesc,
-            #     has_context_category=has_context_cat,
-            #     has_material_category=has_material_cat,
-            #     has_sample_object_type=has_sample_obj_type,
-            #     keywords=thekeywords,
-            #     label=theobj['name'],
-            #     last_modified_time=theobj['last_update_date'],
-            #     produced_by=theSamplingEvent,
-            #     registrant=theregistrant,
-            #     related_resource=therels,
-            #     sample_identifier=theobj['igsn'],
-            #     sampling_purpose=theobj['purpose']
-            # )
-            # addNodeToList(g,  ms, insertDict)
 
             insert_val = get_blank_insert()
             insert_val['otype'] = 'MaterialSampleRecord'
@@ -1368,14 +1346,10 @@ def load_samples(g, concept_lkup, agent_lkup):
             LOGGER.debug(f"total for{str(theobj['sample_id'])}: {execution_time} milliseconds")
 
             therow += 1
-            writebatchsize = 1000
+            writebatchsize = 50000
             if therow % writebatchsize == 0:
-                # writeduckdb(g,insertDict)
-                insertDict = {}
                 try:
-                    write_json_lines(INSERT_VALS, 'samples.json')
-                    # thesql = "COPY node FROM 'concepts.json';"
-                    #thesql = "INSERT OR IGNORE INTO node SELECT * FROM read_json_auto('samples.json');"
+                    write_json_lines_fast(INSERT_VALS, 'samples.json')
                     thesql = "INSERT OR IGNORE INTO node SELECT * FROM read_json('samples.json');"
                     with g.getCursor() as csr:
                         csr.execute(thesql)
@@ -1391,15 +1365,20 @@ def load_samples(g, concept_lkup, agent_lkup):
                 print(f"load sample {therow}")
                 rept_time = time.time()
 
-            if therow > 100000:
-                print(f'load sample loop done. break')
-                break
-
         LOGGER.info(f'load iteration done. max_id: {max_id}')
         if max_id == sample_max_id:
-        #if therow >= 100001:
+            # if therow >= 100001:
             print(f'load sample loop done. break')
             break
+
+    if len(INSERT_VALS) > 0:
+        write_json_lines_fast(data=INSERT_VALS, filename='samples.json')
+        thesql = "INSERT OR IGNORE INTO node SELECT * FROM read_json('samples.json');"
+        with g.getCursor() as csr:
+            csr.execute(thesql)
+        g._connection.commit()
+        INSERT_VALS.clear()
+        LOGGER.info(f'load sample therow: {therow}')
     return 1
 
 
@@ -1419,7 +1398,7 @@ def get_edge_pid(s: str, p: str, o: str,
     return thepid
 
 
-def get_edge_insert_val(otype:str, s: str, p: str, o: str,
+def get_edge_insert_val(otype: str, s: str, p: str, o: str,
                         n: pqg.common.OptionalStr = None):
     edgepid = get_edge_pid(s, p, o, n)
     if edgepid is not None:
@@ -1440,8 +1419,8 @@ def main(dest: str = None):
     load_agent_lkup = False
     loadsamples = False
     tstart_time = time.time()
-#    insert_vals = []
-#    test_vals = []
+    #    insert_vals = []
+    #    test_vals = []
     sesarDb = get_2025Connection()
     if sesarDb:
         print("Connection to SESAR2025 PostgresSQL database established successfully.")
@@ -1449,7 +1428,7 @@ def main(dest: str = None):
         print("Connection to SESAR2025 PostgresSQL encountered an error.")
         exit()
 
-    theddb = 'sesarduck2.ddb'
+    theddb = 'sesarduck6.ddb'
     dbinstance = duckdb.connect(theddb)
     g = createGraph(dbinstance)
 
@@ -1512,16 +1491,6 @@ def main(dest: str = None):
         print(f'material type loaded {result}')
         with open('concept_lkup.pkl', 'wb') as file:
             pickle.dump(concept_lkup, file)
-        # try:
-        #     write_json_lines(INSERT_VALS, 'concepts.json')
-        #     # thesql = "COPY node FROM 'concepts.json';"
-        #     thesql = "INSERT OR IGNORE INTO node SELECT * FROM read_json_auto('concepts.json');"
-        #     with g.getCursor() as csr:
-        #         csr.execute(thesql)
-        #     g._connection.commit()
-        #     INSERT_VALS.clear()
-        # except Exception as e:
-        #     LOGGER.info(f'Error inserting concepts; exception {repr(e)}')
     else:  # load the cached lookup file; assume that the concept nodes are already in the graph
         try:
             with open('concept_lkup.pkl', 'rb') as file:
@@ -1538,17 +1507,6 @@ def main(dest: str = None):
         print(f'institution in agent_lkup loaded {result}')
         with open('agent_lkup.pkl', 'wb') as file:
             pickle.dump(agent_lkup, file)
-
-        # try:
-        #     write_json_lines(INSERT_VALS, 'agents.json')
-        #     # thesql = "COPY node FROM 'concepts.json';"
-        #     thesql = "INSERT OR IGNORE INTO node SELECT * FROM read_json_auto('agents.json');"
-        #     with g.getCursor() as csr:
-        #         csr.execute(thesql)
-        #     g._connection.commit()
-        #     INSERT_VALS.clear()
-        # except Exception as e:
-        #     LOGGER.info(f'Error inserting agents; exception {repr(e)}')
     else:  # load the cached lookup file
         try:
             with open('agent_lkup.pkl', 'rb') as file:
@@ -1557,17 +1515,17 @@ def main(dest: str = None):
             print(f'cached agent_lkup file needs to be created, make load_agent_lkup TRUE')
             exit()
 
-#    AGENT_PID_LKUP = load_agent_altid_pid_lkup(agent_lkup)
+    #    AGENT_PID_LKUP = load_agent_altid_pid_lkup(agent_lkup)
 
     if loadsamples:
         load_samples(g, concept_lkup, agent_lkup)
 
-    dest = 'sesarTest2'
+    dest = 'sesarTest6'
     try:
         if dest is not None:
             g.asParquet(pathlib.Path(dest))
     except Exception as e:
-
+        LOGGER.info(f'could not generate parquet file {dest}')
 
     tend_time = time.time()
     execution_time = tend_time - tstart_time
