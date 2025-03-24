@@ -3,3 +3,5 @@
 *.ddb
 *.wal
 *.log
+*.pkl
+/isamples/.idea
