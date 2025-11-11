@@ -746,23 +746,44 @@ class PQG:
         obj: typing.Optional[str] = None,
         maxrows: int = 0,
     ) -> typing.Iterator[typing.Tuple[str, str, str]]:
+        """Get relations, returning PIDs for subject and object.
+        
+        Args:
+            subject: PID of the subject (will be converted to row_id for query)
+            predicate: Predicate string
+            obj: PID of the object (will be converted to row_id for query)
+            maxrows: Maximum number of rows to return
+            
+        Yields:
+            Tuples of (subject_pid, predicate, object_pid)
+        """
         batch_size = 100
-        sql = f"SELECT s, p, o FROM {self._table}"
+        sql = f"SELECT s, p, o FROM {self._table} WHERE otype='_edge_'"
         params = []
         if subject is not None:
-            sql += " WHERE s=?"
+            s_row_id = self.pidToRowId(subject)
+            if s_row_id is not None:
+                sql += " AND s=?"
+                params.append(s_row_id)
         if predicate is not None:
-            sql += " WHERE p=?"
+            sql += " AND p=?"
+            params.append(predicate)
         if obj is not None:
-            sql += " WHERE o=?"
+            o_row_id = self.pidToRowId(obj)
+            if o_row_id is not None:
+                sql += " AND list_contains(o, ?)"
+                params.append(o_row_id)
         if maxrows > 0:
             sql += f" LIMIT {maxrows}"
         with self.getCursor() as csr:
             result = csr.execute(sql, params)
             while batch := result.fetchmany(size=batch_size):
                 for row in batch:
-                    for _o in row[2]:
-                        yield row[0], row[1], _o
+                    s_pid = self.rowIdToPid(row[0])
+                    for _o_row_id in row[2]:
+                        o_pid = self.rowIdToPid(_o_row_id)
+                        if s_pid and o_pid:
+                            yield s_pid, row[1], o_pid
 
     def objectCounts(self) -> typing.Iterator[typing.Tuple[str, int]]:
         with self.getCursor() as csr:
@@ -824,10 +845,14 @@ class PQG:
                 color = ""
                 if e[0] in elights:
                     color = ",color=red"
-                for _o in e[3]:
-                    dest.append(
-                        f'{qlabel(e[1])} -> {qlabel(_o)} [label="{e[2]}"' + color + "];"
-                    )
+                # Convert row_ids to PIDs for display
+                s_pid = self.rowIdToPid(e[1]) if e[1] is not None else None
+                for _o_row_id in e[3]:
+                    o_pid = self.rowIdToPid(_o_row_id)
+                    if s_pid and o_pid:
+                        dest.append(
+                            f'{qlabel(s_pid)} -> {qlabel(o_pid)} [label="{e[2]}"' + color + "];"
+                        )
         dest.append("}")
         return dest
 
@@ -861,11 +886,14 @@ class PQG:
 
     def getRootsForPid(self, pid: str) -> typing.Iterator[typing.Tuple[str]]:
         """
-        Yields s, p where o=pid, recursively to yield parent references.
+        Yields s_pid, p, depth where o contains the given pid, recursively to yield parent references.
         """
+        row_id = self.pidToRowId(pid)
+        if row_id is None:
+            return
         sql = f"""WITH RECURSIVE s_of AS (
-        SELECT s,p, 0 AS depth FROM {self._table} WHERE list_contains(o, ?)
-        UNION ALL SELECT n.s, n.p, depth+1 FROM {self._table} AS n, s_of WHERE list_contains(n.o, s_of.s)
+        SELECT s,p, 0 AS depth FROM {self._table} WHERE otype='_edge_' AND list_contains(o, ?)
+        UNION ALL SELECT n.s, n.p, depth+1 FROM {self._table} AS n, s_of WHERE n.otype='_edge_' AND list_contains(n.o, s_of.s)
         ) SELECT * FROM s_of"""
         _L = getLogger()
         _L.debug(sql)
@@ -873,11 +901,14 @@ class PQG:
             result = csr.execute(
                 sql,
                 [
-                    pid,
+                    row_id,
                 ],
             )
             while row := result.fetchone():
-                yield row
+                # Convert s row_id back to PID
+                s_pid = self.rowIdToPid(row[0])
+                if s_pid:
+                    yield s_pid, row[1], row[2]
 
     def getRootsXForPid(
         self,
@@ -891,9 +922,9 @@ class PQG:
 
         Yields:
             edge_pid        PID of edge
-            subject         s value of edge
+            subject_pid     PID of the subject
             predicate       p value of edge
-            object          o value of edge
+            object_pids     List of PIDs in o
             n               n value of edge
             depth           distance in steps from starting pid
             subject_otype   otype of the edge subject
@@ -904,8 +935,19 @@ class PQG:
         _L = getLogger()
         if predicates is None:
             predicates = []
+        
+        # Convert PIDs to row_ids for the query
+        row_ids = []
+        for pid in pids:
+            row_id = self.pidToRowId(pid)
+            if row_id is not None:
+                row_ids.append(row_id)
+        
+        if not row_ids:
+            return
+            
         params = {
-            "pids": pids,
+            "row_ids": row_ids,
         }
         t_where = ""
         if target_type is not None:
@@ -915,25 +957,31 @@ class PQG:
         if len(predicates) > 0:
             p_where = " AND e.p IN $predicates"
             params["predicates"] = predicates
-        sql = f"""WITH RECURSIVE entity_for(pid, s, p, o, n, depth, stype) AS (
+        # Note: e.s is now a row_id, so join on src.row_id instead of src.pid
+        sql = f"""WITH RECURSIVE entity_for(epid, s, p, o, n, depth, stype) AS (
             SELECT e.pid, e.s, e.p, e.o, e.n, 1 as depth, src.otype as stype
-            FROM {self._table} AS e JOIN {self._table} as src ON src.pid = e.s WHERE e.o IN $pids {p_where}
+            FROM {self._table} AS e JOIN {self._table} as src ON src.row_id = e.s 
+            WHERE e.otype='_edge_' AND list_has_any(e.o, $row_ids) {p_where}
         UNION ALL
-            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, src.otype as stype,
-            FROM {self._table} AS e, entity_for as eg JOIN {self._table} as src ON src.pid = e.s
-            WHERE e.o = eg.s {p_where}
-        ) SELECT pid, s, p, o, n, depth, stype FROM entity_for {t_where};
+            SELECT e.pid, e.s, e.p, e.o, e.n, eg.depth+1 AS depth, src.otype as stype
+            FROM {self._table} AS e, entity_for as eg JOIN {self._table} as src ON src.row_id = e.s
+            WHERE e.otype='_edge_' AND list_has_any(e.o, [eg.s]) {p_where}
+        ) SELECT epid, s, p, o, n, depth, stype FROM entity_for {t_where};
         """
-        _L.debug("getRootsForPid: %s", sql)
+        _L.debug("getRootsXForPid: %s", sql)
         with self.getCursor() as csr:
             result = csr.execute(sql, params)
             while row := result.fetchone():
-                yield row
+                # Convert row_ids back to PIDs
+                s_pid = self.rowIdToPid(row[1])
+                o_pids = [self.rowIdToPid(o_id) for o_id in row[3] if self.rowIdToPid(o_id)]
+                if s_pid:
+                    yield row[0], s_pid, row[2], o_pids, row[4], row[5], row[6]
 
     def breadthFirstTraversal(
         self, pid: str
     ) -> typing.Iterator[typing.Tuple[str, int]]:
-        """Recursively yields (identifier, depth) of objects that are objects of pid or related.
+        """Recursively yields (s_pid, predicate, o_pids, depth) of objects that are objects of pid or related.
 
         With statements subject S, predicate P, object O (i.e. all rows with otype=_edge_),
         and starting subject S(PID), find all objects O for any P, recursing with
@@ -941,11 +989,14 @@ class PQG:
 
         #TODO: add restriction by predicate, graph name
         """
+        row_id = self.pidToRowId(pid)
+        if row_id is None:
+            return
         params = {
-            "pid": pid,
+            "row_id": row_id,
         }
         sql = f"""WITH RECURSIVE edge_for(s, p, o, depth) AS (
-            SELECT e.s, e.p, e.o, 1 AS depth FROM {self._table} AS e WHERE e.s=$pid AND e.otype='_edge_'
+            SELECT e.s, e.p, e.o, 1 AS depth FROM {self._table} AS e WHERE e.s=$row_id AND e.otype='_edge_'
         UNION ALL
             SELECT e.s, e.p, e.o, depth+1 AS depth FROM {self._table} AS e, edge_for WHERE list_contains(edge_for.o, e.s) AND e.otype='_edge_'
         ) SELECT s, p, o, depth FROM edge_for;
@@ -955,7 +1006,11 @@ class PQG:
         with self.getCursor() as csr:
             result = csr.execute(sql, params)
             while row := result.fetchone():
-                yield row
+                # Convert row_ids back to PIDs
+                s_pid = self.rowIdToPid(row[0])
+                o_pids = [self.rowIdToPid(o_id) for o_id in row[2] if self.rowIdToPid(o_id)]
+                if s_pid:
+                    yield s_pid, row[1], o_pids, row[3]
 
     def objectsAtPath(self, path: typing.List[str]) -> typing.Iterator[str]:
         """
