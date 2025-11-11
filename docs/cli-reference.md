@@ -581,6 +581,8 @@ pqg entries library.parquet --otype Author --maxrows 1000 | \
   sort -rn
 ```
 
+> 💡 **Performance Tip**: This example loads the parquet file once per PID, which is inefficient for large datasets. For production use with many PIDs, use SQL queries directly via `pqg sql` or batch processing with Python/DuckDB for better performance.
+
 ## Tips and Tricks
 
 ### Tip 1: Use Shell Redirection

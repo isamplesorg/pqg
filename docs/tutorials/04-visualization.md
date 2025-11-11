@@ -22,7 +22,7 @@ For full visualization capabilities, install Graphviz:
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install graphviz
+sudo apt install graphviz
 
 # macOS
 brew install graphviz

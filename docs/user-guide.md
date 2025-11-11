@@ -243,10 +243,11 @@ class Sample(Base):
     collection_method: Optional[str] = None
 ```
 
-Avoid SQL reserved words:
-- Use `sample_desc` not `description` (unless inherited from Base)
-- Use `item_order` not `order`
-- Use `item_type` not `type`
+Avoid SQL reserved words in custom fields:
+- The `description` field is safe to use when inherited from `Base`
+- For custom fields, use `sample_desc` instead of adding another `description`
+- Use `item_order` instead of `order`
+- Use `item_type` instead of `type`
 
 ## Working with Graphs
 
@@ -1022,6 +1023,8 @@ Get node identifiers.
 **Parameters:**
 - `otype`: Filter by type (optional)
 - `maxrows`: Maximum results (default: 100)
+
+> ⚠️ **Important**: Results are limited to 100 rows by default to prevent accidental massive queries on large graphs. Set `maxrows` explicitly (e.g., `maxrows=10000`) for larger result sets, or use direct SQL queries for full dataset access.
 
 **Returns:** Generator of (pid, otype) tuples
 

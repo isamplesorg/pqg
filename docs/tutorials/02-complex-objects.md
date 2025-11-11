@@ -42,7 +42,7 @@ This means you can work with natural Python objects while PQG handles the graph 
 import duckdb
 from dataclasses import dataclass
 from typing import Optional, List
-from pqg import PQG, Base
+from pqg import PQG, Base, Edge
 
 @dataclass
 class Organization(Base):
@@ -238,8 +238,6 @@ def add_publications(graph, db):
 Here's where it gets interesting! Notice how we use lists of PIDs to reference multiple team members and publications:
 
 ```python
-from pqg import Edge
-
 def add_projects(graph, db):
     """Add research projects with team members and publications"""
 

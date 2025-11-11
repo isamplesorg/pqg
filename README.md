@@ -176,7 +176,7 @@ Track samples, experiments, and publications:
 class Sample(Base):
     sample_id: Optional[str] = None
     collection_date: Optional[str] = None
-    collector: Optional[str] = None  # Links to Person
+    collector: Optional[str] = None  # PID of Person (not Person object)
 
 @dataclass
 class Publication(Base):
