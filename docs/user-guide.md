@@ -104,14 +104,15 @@ All data (nodes and edges) lives in one table:
 
 ```sql
 CREATE TABLE node (
-    pid VARCHAR PRIMARY KEY,
-    tcreated INTEGER,
-    tmodified INTEGER,
+    row_id INTEGER PRIMARY KEY DEFAULT nextval('row_id_sequence'),
+    pid VARCHAR UNIQUE NOT NULL,
+    tcreated INTEGER DEFAULT(CAST(epoch(current_timestamp) AS INTEGER)),
+    tmodified INTEGER DEFAULT(CAST(epoch(current_timestamp) AS INTEGER)),
     otype VARCHAR,
     -- Edge fields
-    s VARCHAR,
+    s INTEGER,
     p VARCHAR,
-    o VARCHAR[],
+    o INTEGER[],
     n VARCHAR,
     -- Base fields
     label VARCHAR,
@@ -124,6 +125,8 @@ CREATE TABLE node (
     ...
 );
 ```
+
+> **Note**: While the API uses PIDs (strings) for edge references, PQG internally stores these as INTEGER `row_id` references for 2-5x faster joins. The conversion is automatic and transparent.
 
 This design enables:
 - Simple queries without complex joins
@@ -200,13 +203,13 @@ class Person(Base):
 
 | Python Type | DuckDB Type | Notes |
 |-------------|-------------|-------|
-| `str` | VARCHAR | Text data |
-| `int` | INTEGER | Whole numbers |
+| `str` | VARCHAR | Text data, PIDs |
+| `int` | INTEGER | Whole numbers, row_id references |
 | `float` | DOUBLE | Decimals |
 | `bool` | BOOLEAN | True/False |
 | `datetime` | TIMESTAMPTZ | Timestamps |
 | `List[str]` | VARCHAR[] | String arrays |
-| `List[int]` | INTEGER[] | Integer arrays |
+| `List[int]` | INTEGER[] | Integer arrays (used for `o` field edges) |
 | `List[float]` | DOUBLE[] | Float arrays |
 | Dataclass | N/A | Decomposed to separate nodes |
 

@@ -178,6 +178,8 @@ for subject, predicate, obj in graph.getRelations():
     print(f"{subject} --{predicate}--> {obj}")
 ```
 
+> **💡 Performance Tip**: While you provide PIDs as strings (like `"person_001"`), PQG internally stores these as INTEGER `row_id` references for 2-5x faster graph traversals. The conversion is automatic and transparent - you never need to manage row_ids yourself.
+
 Run it:
 
 ```bash
