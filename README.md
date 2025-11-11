@@ -11,7 +11,8 @@ Only a single table ise used to capture node and edge information.
 The model of a node is:
 
 ```
-pid         Globally unique identifier for the node.
+row_id      Auto-incrementing integer primary key for the node row.
+pid         Globally unique identifier for the node (unique but not primary key).
 tcreated    Time stamp for when the node instance is created.
 tmodified   Time stamp for when the instance has been modified.
 otype       The type of entity described by this node instance.
@@ -26,16 +27,17 @@ Node classes store literal values or lists of literal values. Composite nodes ar
 The model of an edge is:
 
 ```
-pid         Globally unique identifier for the node.
-tcreated    Time stamp for when the node instance is created.
+row_id      Auto-incrementing integer primary key for the edge row
+pid         Globally unique identifier for the edge.
+tcreated    Time stamp for when the edge instance is created.
 tmodified   Time stamp for when the instance has been modified.
 otype       "_edge_"
 label       Optional textual label for human use.
-description Optional human readable description of the node.
-altids      A list of alternate identifiers for the node (aliases of pid)
-s           Subject or source of the relation.
+description Optional human readable description of the edge.
+altids      A list of alternate identifiers for the edge (aliases of pid)
+s           Subject or source of the relation (row_id integer reference).
 p           Predicate or type of the relation.
-o           List of targets (objects) for the relation.
+o           List of targets (objects) for the relation (list of row_id integer references).
 n           Name of the graph containing the relation.
 ```
 

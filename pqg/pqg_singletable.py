@@ -123,7 +123,7 @@ class PQG:
 
     def __init__(
         self,
-        dbinstance: duckdb.duckdb.DuckDBPyConnection,
+        dbinstance: duckdb.DuckDBPyConnection,
         source: pqg.common.OptionalStr = None,
         primary_key_field: str = None,
     ) -> None:
