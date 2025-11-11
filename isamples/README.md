@@ -165,15 +165,16 @@ These properties are set during the creation of the parquet file.
 
 The full schema for the data portion is:
 
-```
+```sql
 CREATE TABLE node(
-    pid VARCHAR PRIMARY KEY,
+    row_id INTEGER PRIMARY KEY DEFAULT nextval('row_id_sequence'),
+    pid VARCHAR UNIQUE NOT NULL,
     tcreated INTEGER DEFAULT(CAST(epoch(current_timestamp) AS INTEGER)),
     tmodified INTEGER DEFAULT(CAST(epoch(current_timestamp) AS INTEGER)),
     otype VARCHAR,
-    s VARCHAR DEFAULT(NULL),
+    s INTEGER DEFAULT(NULL),
     p VARCHAR DEFAULT(NULL),
-    o VARCHAR DEFAULT(NULL),
+    o INTEGER[] DEFAULT(NULL),
     n VARCHAR DEFAULT(NULL),
     altids VARCHAR[] DEFAULT(NULL),
     geometry GEOMETRY DEFAULT(NULL),
@@ -204,20 +205,23 @@ CREATE TABLE node(
     access_constraints VARCHAR[],
     place_name VARCHAR[],
     description VARCHAR DEFAULT(NULL),
-    "label" VARCHAR DEFAULT(NULL)
+    "label" VARCHAR DEFAULT(NULL),
+    thumbnail_url VARCHAR DEFAULT(NULL)
 );
 ```
 
 | Field | Description |
 | -- | -- |
-| `pid` | Unique identifier for the row. |
+| `row_id` | Auto-incrementing integer primary key for performance. |
+| `pid` | Unique identifier for the row. This is the globally unique identifier used externally. |
 | `tcreated` | Timestmap indicating the time the record in the files was created, not the time that the record was created in the content management system. |
 | `tmodified` | Timestmap indicating the time the record was modified in this file. |
 | `otype` | Type of object represented by the row. Edges are always called "_edge_". |
-| `s` | The subject of the triple statement between two objects |
-| `p` | The predicate of the triple statement |
-| `o` | The object or target of the triple statement |
+| `s` | The subject of the triple statement between two objects (integer row_id reference). |
+| `p` | The predicate of the triple statement. |
+| `o` | The object or target of the triple statement (array of integer row_id references). |
 | `n` | Optional name of the graph the statement exists in. |
+| `thumbnail_url` | Optional URL to a thumbnail image for the record. |
 
 The possible values of `otype` are defined by the isamples linkml schema, and are:
 
@@ -245,10 +249,12 @@ erDiagram
     MaterialSampleRecord }o--o| Agent : registrant
 ```
 
-Results in the following records:
+Results in the following records (note: s and o now store row_id integers, not PIDs):
 
-| pid | otype | s | p | o | ...|
-| -- | -- | -- | -- | -- | -- |
-| `msr_1` | `MaterialSampleRecord` | null | null | null | |
-| `agent_1` | `Agent` | null | null | null | |
-| `45ef21` | `_edge_` | `msr_1` | `registrant` | `agent_1` | |
+| row_id | pid | otype | s | p | o | ...|
+| -- | -- | -- | -- | -- | -- | -- |
+| 1 | `msr_1` | `MaterialSampleRecord` | null | null | null | |
+| 2 | `agent_1` | `Agent` | null | null | null | |
+| 3 | `45ef21` | `_edge_` | 1 | `registrant` | [2] | |
+
+Note: In the edge row, the `s` field contains the row_id (1) of the MaterialSampleRecord, and the `o` field contains an array with the row_id (2) of the Agent. The API continues to use PIDs externally for compatibility, but internally uses row_ids for improved performance.
