@@ -606,11 +606,13 @@ class PQG:
                 return None
             data = dict(zip(self._edgefields, values))
             # Convert row_ids back to PIDs for the Edge object
-            if data['s'] is not None:
+            if data.get('s') is not None:
                 data['s'] = self.rowIdToPid(data['s'])
-            if data['o'] is not None and isinstance(data['o'], list):
+            if data.get('o') is not None and isinstance(data['o'], list):
                 data['o'] = [self.rowIdToPid(o_id) for o_id in data['o']]
-            return Edge(**data)
+            # Remove fields that are not part of the Edge dataclass
+            edge_data = {k: v for k, v in data.items() if k not in ['otype', 'geometry']}
+            return Edge(**edge_data)
 
     def _addNode(self, obj: pqg.common.IsDataclass) -> str:
         _L = getLogger()
