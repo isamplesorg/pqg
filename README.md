@@ -11,6 +11,7 @@ PQG provides a middle ground between full-featured property graph databases (lik
 - **Simple & Fast**: Single table design with DuckDB backend
 - **Python Native**: Work with Python dataclasses - no query language needed
 - **Automatic Decomposition**: Complex nested objects automatically become nodes and edges
+- **Typed Edges**: Specialized support for 14 iSamples edge types with validation and type-safe queries
 - **Spatial Support**: Built-in geographic data handling and GeoJSON export
 - **Multiple Formats**: Export to Parquet, Graphviz, GeoJSON
 - **Type-Safe**: Leverages Python type hints for data validation
@@ -213,6 +214,30 @@ class Location(Base):
 graph.asParquet(Path("locations.parquet"))
 # Then: pqg geo locations.parquet > map.geojson
 ```
+
+## Typed Edge Support (iSamples)
+
+PQG includes specialized support for 14 edge types from the iSamples LinkML schema, enabling type-safe graph operations without modifying the underlying schema:
+
+```python
+from pqg import ISamplesEdgeType, TypedEdgeGenerator, TypedEdgeQueries
+
+# Create typed edges with validation
+generator = TypedEdgeGenerator(graph)
+generator.add_msr_produced_by("sample_001", "event_001")
+generator.add_msr_registrant("sample_001", "agent_001")
+
+# Query by edge type
+queries = TypedEdgeQueries(graph)
+for s, p, o, edge_type in queries.get_typed_relations(subject="sample_001"):
+    print(f"{s} --{p}--> {o} (type: {edge_type.name})")
+
+# Get all edges of a specific type
+for s, p, o_list, n, et in queries.get_edges_by_type(ISamplesEdgeType.MSR_PRODUCED_BY):
+    print(f"{s} produced sample {o_list}")
+```
+
+The 14 supported edge types cover MaterialSampleRecord, SamplingEvent, SamplingSite, Agent, and related entities. See [Typed Edges Documentation](docs/typed-edges.md) for complete details.
 
 ## Command-Line Tools
 

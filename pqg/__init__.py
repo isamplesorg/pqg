@@ -16,6 +16,18 @@ from pqg.pqg_singletable import (
     Base,
     PQG,
 )
+from pqg.edge_types import (
+    ISamplesEdgeType,
+    infer_edge_type,
+    validate_edge_type,
+    get_edge_types_by_subject,
+    get_edge_types_by_object,
+    EDGE_TYPE_CONSTRAINTS,
+)
+from pqg.typed_edges import (
+    TypedEdgeQueries,
+    TypedEdgeGenerator,
+)
 
 
 __all__ = [
@@ -31,4 +43,12 @@ __all__ = [
     Base,
     PQG,
     JSONDateTimeEncoder,
+    ISamplesEdgeType,
+    infer_edge_type,
+    validate_edge_type,
+    get_edge_types_by_subject,
+    get_edge_types_by_object,
+    EDGE_TYPE_CONSTRAINTS,
+    TypedEdgeQueries,
+    TypedEdgeGenerator,
 ]
