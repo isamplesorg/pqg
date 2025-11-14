@@ -13,7 +13,7 @@ This allows type-safe operations while maintaining backward compatibility.
 """
 
 import logging
-from typing import Optional, List, Tuple, Iterator, Set
+from typing import Optional, List, Tuple, Iterator
 from pqg.edge_types import (
     ISamplesEdgeType,
     infer_edge_type,
@@ -136,6 +136,25 @@ class TypedEdgeQueries:
         with self.pqg.getCursor() as csr:
             results = csr.execute(sql, [predicate, subject_type]).fetchall()
 
+        # Batch fetch all object nodes to avoid N+1 query problem
+        # First, collect all unique object row_ids
+        all_o_row_ids = set()
+        for row in results:
+            _, _, _, o_row_ids, _, _, _ = row
+            all_o_row_ids.update(o_row_ids)
+
+        # Batch query all object nodes at once
+        o_node_lookup = {}  # row_id -> (pid, otype)
+        if all_o_row_ids:
+            placeholders = ','.join('?' * len(all_o_row_ids))
+            with self.pqg.getCursor() as csr:
+                o_nodes = csr.execute(
+                    f"SELECT row_id, pid, otype FROM {self.pqg._table} WHERE row_id IN ({placeholders})",
+                    list(all_o_row_ids)
+                ).fetchall()
+                o_node_lookup = {row[0]: (row[1], row[2]) for row in o_nodes}
+
+        # Now process each edge using the lookup
         for row in results:
             edge_pid, s_row_id, p, o_row_ids, n, s_otype, s_pid = row
 
@@ -144,23 +163,18 @@ class TypedEdgeQueries:
             all_match = True
 
             for o_row_id in o_row_ids:
-                with self.pqg.getCursor() as csr:
-                    o_result = csr.execute(
-                        f"SELECT pid, otype FROM {self.pqg._table} WHERE row_id = ?",
-                        [o_row_id]
-                    ).fetchone()
+                o_node = o_node_lookup.get(o_row_id)
+                if not o_node:
+                    all_match = False
+                    break
 
-                    if not o_result:
-                        all_match = False
-                        break
+                o_pid, o_otype = o_node
 
-                    o_pid, o_otype = o_result
+                if o_otype != object_type:
+                    all_match = False
+                    break
 
-                    if o_otype != object_type:
-                        all_match = False
-                        break
-
-                    o_pids.append(o_pid)
+                o_pids.append(o_pid)
 
             if all_match and len(o_pids) > 0:
                 yield (s_pid, p, o_pids, n, edge_type)
@@ -272,11 +286,28 @@ class TypedEdgeQueries:
         Returns:
             Tuple of (is_valid, error_message)
         """
+        # Get subject and object otypes for better error messages
+        with self.pqg.getCursor() as csr:
+            subject_result = csr.execute(
+                f"SELECT otype FROM {self.pqg._table} WHERE {self.pqg._node_pk} = ? AND otype != '_edge_'",
+                [subject_pid]
+            ).fetchone()
+            object_result = csr.execute(
+                f"SELECT otype FROM {self.pqg._table} WHERE {self.pqg._node_pk} = ? AND otype != '_edge_'",
+                [object_pid]
+            ).fetchone()
+
+        subject_otype = subject_result[0] if subject_result else "Unknown"
+        object_otype = object_result[0] if object_result else "Unknown"
+
         # Infer the actual type
         inferred_type = self.infer_edge_type_from_pids(subject_pid, predicate, object_pid)
 
         if inferred_type is None:
-            return False, f"Edge pattern ({subject_pid}, {predicate}, {object_pid}) does not match any known edge type"
+            return False, (
+                f"Edge pattern ({subject_otype}, {predicate}, {object_otype}) "
+                f"does not match any known edge type"
+            )
 
         # Check against expected type if provided
         if expected_type and inferred_type != expected_type:
@@ -341,8 +372,8 @@ class TypedEdgeGenerator:
         """
         # Validate if requested
         if validate:
+            queries = TypedEdgeQueries(self.pqg)
             for object_pid in object_pids:
-                queries = TypedEdgeQueries(self.pqg)
                 is_valid, error = queries.validate_edge(
                     subject_pid, predicate, object_pid, expected_type
                 )

@@ -259,7 +259,7 @@ def main():
     print("\nKey Features:")
     print("  • 14 typed edge patterns from iSamples schema")
     print("  • NO schema changes to PQG")
-    print("  • Edge types inferred from node otipes")
+    print("  • Edge types inferred from node otypes")
     print("  • Specialized query methods by type")
     print("  • Generation helpers with validation")
     print("  • Full backward compatibility")
