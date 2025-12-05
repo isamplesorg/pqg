@@ -269,13 +269,21 @@ def _convert_staged(
         print("    Stage 3: Creating concept entities...")
 
     # 3a. has_sample_object_type concepts
+    # FIX: Deduplicate FIRST, then assign row_id (DISTINCT + row_number() is a no-op)
     con.execute(f"""
         CREATE TEMP TABLE object_types AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT unnest.identifier AS pid
+            FROM source
+            CROSS JOIN UNNEST(has_sample_object_type) AS unnest
+            WHERE has_sample_object_type IS NOT NULL
+        ),
+        dedup AS (SELECT DISTINCT pid FROM expanded)
+        SELECT
             {location_max} + row_number() OVER () as row_id,
-            unnest.identifier as pid,
+            pid,
             'IdentifiedConcept' as otype,
-            unnest.identifier as label,
+            pid as label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
@@ -284,20 +292,27 @@ def _convert_staged(
             NULL as n,
             json_object('concept_type', 'sample_object_type') as properties,
             NULL::GEOMETRY as geometry
-        FROM source, UNNEST(has_sample_object_type) as unnest
-        WHERE has_sample_object_type IS NOT NULL
+        FROM dedup
     """)
 
     object_type_max = con.execute(f"SELECT COALESCE(MAX(row_id), {location_max}) FROM object_types").fetchone()[0]
 
     # 3b. has_material_category concepts (excluding already added)
+    # FIX: Deduplicate FIRST, then assign row_id, then exclude
     con.execute(f"""
         CREATE TEMP TABLE materials AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT unnest.identifier AS pid
+            FROM source
+            CROSS JOIN UNNEST(has_material_category) AS unnest
+            WHERE has_material_category IS NOT NULL
+        ),
+        dedup AS (SELECT DISTINCT pid FROM expanded)
+        SELECT
             {object_type_max} + row_number() OVER () as row_id,
-            unnest.identifier as pid,
+            d.pid,
             'IdentifiedConcept' as otype,
-            unnest.identifier as label,
+            d.pid as label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
@@ -306,21 +321,29 @@ def _convert_staged(
             NULL as n,
             json_object('concept_type', 'material_category') as properties,
             NULL::GEOMETRY as geometry
-        FROM source, UNNEST(has_material_category) as unnest
-        WHERE has_material_category IS NOT NULL
-          AND unnest.identifier NOT IN (SELECT pid FROM object_types)
+        FROM dedup d
+        LEFT JOIN object_types ot ON ot.pid = d.pid
+        WHERE ot.pid IS NULL
     """)
 
     material_max = con.execute(f"SELECT COALESCE(MAX(row_id), {object_type_max}) FROM materials").fetchone()[0]
 
     # 3c. has_context_category concepts (excluding already added)
+    # FIX: Deduplicate FIRST, then assign row_id, then exclude using anti-join
     con.execute(f"""
         CREATE TEMP TABLE contexts AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT unnest.identifier AS pid
+            FROM source
+            CROSS JOIN UNNEST(has_context_category) AS unnest
+            WHERE has_context_category IS NOT NULL
+        ),
+        dedup AS (SELECT DISTINCT pid FROM expanded)
+        SELECT
             {material_max} + row_number() OVER () as row_id,
-            unnest.identifier as pid,
+            d.pid,
             'IdentifiedConcept' as otype,
-            unnest.identifier as label,
+            d.pid as label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
@@ -329,22 +352,30 @@ def _convert_staged(
             NULL as n,
             json_object('concept_type', 'context_category') as properties,
             NULL::GEOMETRY as geometry
-        FROM source, UNNEST(has_context_category) as unnest
-        WHERE has_context_category IS NOT NULL
-          AND unnest.identifier NOT IN (SELECT pid FROM object_types)
-          AND unnest.identifier NOT IN (SELECT pid FROM materials)
+        FROM dedup d
+        LEFT JOIN object_types ot ON ot.pid = d.pid
+        LEFT JOIN materials mat ON mat.pid = d.pid
+        WHERE ot.pid IS NULL AND mat.pid IS NULL
     """)
 
     context_max = con.execute(f"SELECT COALESCE(MAX(row_id), {material_max}) FROM contexts").fetchone()[0]
 
     # 3d. Keywords
+    # FIX: Deduplicate FIRST, then assign row_id
     con.execute(f"""
         CREATE TEMP TABLE keywords AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT 'keyword:' || unnest.keyword AS pid, unnest.keyword AS label
+            FROM source
+            CROSS JOIN UNNEST(keywords) AS unnest
+            WHERE keywords IS NOT NULL
+        ),
+        dedup AS (SELECT DISTINCT pid, label FROM expanded)
+        SELECT
             {context_max} + row_number() OVER () as row_id,
-            'keyword:' || unnest.keyword as pid,
+            pid,
             'IdentifiedConcept' as otype,
-            unnest.keyword as label,
+            label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
@@ -353,8 +384,7 @@ def _convert_staged(
             NULL as n,
             json_object('concept_type', 'keyword') as properties,
             NULL::GEOMETRY as geometry
-        FROM source, UNNEST(keywords) as unnest
-        WHERE keywords IS NOT NULL
+        FROM dedup
     """)
 
     keyword_max = con.execute(f"SELECT COALESCE(MAX(row_id), {context_max}) FROM keywords").fetchone()[0]
@@ -364,13 +394,24 @@ def _convert_staged(
         print("    Stage 4: Creating agent entities...")
 
     # 4a. Registrant agents
+    # FIX: Deduplicate FIRST, then assign row_id
     con.execute(f"""
         CREATE TEMP TABLE registrants AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT
+                'agent:' || LOWER(TRIM(registrant.name)) AS pid,
+                registrant.name AS label
+            FROM source
+            WHERE registrant IS NOT NULL
+              AND registrant.name IS NOT NULL
+              AND TRIM(registrant.name) != ''
+        ),
+        dedup AS (SELECT DISTINCT pid, label FROM expanded)
+        SELECT
             {keyword_max} + row_number() OVER () as row_id,
-            'agent:' || LOWER(TRIM(registrant.name)) as pid,
+            pid,
             'Agent' as otype,
-            registrant.name as label,
+            label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
@@ -379,37 +420,44 @@ def _convert_staged(
             NULL as n,
             json_object('role', 'registrant') as properties,
             NULL::GEOMETRY as geometry
-        FROM source
-        WHERE registrant IS NOT NULL
-          AND registrant.name IS NOT NULL
-          AND TRIM(registrant.name) != ''
+        FROM dedup
     """)
 
     registrant_max = con.execute(f"SELECT COALESCE(MAX(row_id), {keyword_max}) FROM registrants").fetchone()[0]
 
     # 4b. Responsibility agents (from produced_by.responsibility)
+    # FIX: Deduplicate FIRST, then assign row_id, then exclude using anti-join
     con.execute(f"""
         CREATE TEMP TABLE responsibility_agents AS
-        SELECT DISTINCT
+        WITH expanded AS (
+            SELECT
+                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) AS pid,
+                unnest.name AS label,
+                unnest.role AS role
+            FROM source
+            CROSS JOIN UNNEST(produced_by.responsibility) AS unnest
+            WHERE produced_by IS NOT NULL
+              AND produced_by.responsibility IS NOT NULL
+              AND unnest.name IS NOT NULL
+              AND TRIM(unnest.name) != ''
+        ),
+        dedup AS (SELECT DISTINCT pid, label, role FROM expanded)
+        SELECT
             {registrant_max} + row_number() OVER () as row_id,
-            'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) as pid,
+            d.pid,
             'Agent' as otype,
-            unnest.name as label,
+            d.label,
             NULL as description,
             NULL::VARCHAR[] as altids,
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
             NULL as n,
-            json_object('role', unnest.role) as properties,
+            json_object('role', d.role) as properties,
             NULL::GEOMETRY as geometry
-        FROM source, UNNEST(produced_by.responsibility) as unnest
-        WHERE produced_by IS NOT NULL
-          AND produced_by.responsibility IS NOT NULL
-          AND unnest.name IS NOT NULL
-          AND TRIM(unnest.name) != ''
-          AND ('agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))))
-              NOT IN (SELECT pid FROM registrants)
+        FROM dedup d
+        LEFT JOIN registrants r ON r.pid = d.pid
+        WHERE r.pid IS NULL
     """)
 
     agent_max = con.execute(f"SELECT COALESCE(MAX(row_id), {registrant_max}) FROM responsibility_agents").fetchone()[0]
