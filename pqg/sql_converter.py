@@ -794,57 +794,82 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
 
     if verbose:
         print("    Stage 6: Building wide format columns...")
+        print("      6a: Creating sample_edges table (this may take a while)...")
 
     # Create sample edge aggregations
+    # Note: DuckDB's UNNEST in correlated subqueries needs special handling
+    # We use LATERAL JOINs for the array fields
     con.execute("""
         CREATE TEMP TABLE sample_edges AS
         SELECT
             s.sample_identifier,
             samp.row_id as sample_row_id,
             evt.row_id as p__produced_by,
-            (SELECT list(ot_lookup.row_id)
-             FROM UNNEST(s.has_sample_object_type) as ot
-             JOIN pid_lookup ot_lookup ON ot_lookup.pid = ot.identifier
-            ) as p__has_sample_object_type,
-            (SELECT list(mat_lookup.row_id)
-             FROM UNNEST(s.has_material_category) as mat
-             JOIN pid_lookup mat_lookup ON mat_lookup.pid = mat.identifier
-            ) as p__has_material_category,
-            (SELECT list(ctx_lookup.row_id)
-             FROM UNNEST(s.has_context_category) as ctx
-             JOIN pid_lookup ctx_lookup ON ctx_lookup.pid = ctx.identifier
-            ) as p__has_context_category,
-            (SELECT list(kw_lookup.row_id)
-             FROM UNNEST(s.keywords) as kw
-             JOIN pid_lookup kw_lookup ON kw_lookup.pid = 'keyword:' || kw.keyword
-            ) as p__keywords,
+            ot_agg.row_ids as p__has_sample_object_type,
+            mat_agg.row_ids as p__has_material_category,
+            ctx_agg.row_ids as p__has_context_category,
+            kw_agg.row_ids as p__keywords,
             (SELECT agent.row_id
              FROM pid_lookup agent
              WHERE agent.pid = 'agent:' || LOWER(TRIM(s.registrant.name))
+             LIMIT 1
             ) as p__registrant
         FROM source s
         JOIN pid_lookup samp ON samp.pid = s.sample_identifier
         LEFT JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
+        LEFT JOIN LATERAL (
+            SELECT list(ot_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_sample_object_type) as t(ot)
+            JOIN pid_lookup ot_lookup ON ot_lookup.pid = ot.identifier
+        ) ot_agg ON true
+        LEFT JOIN LATERAL (
+            SELECT list(mat_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_material_category) as t(mat)
+            JOIN pid_lookup mat_lookup ON mat_lookup.pid = mat.identifier
+        ) mat_agg ON true
+        LEFT JOIN LATERAL (
+            SELECT list(ctx_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_context_category) as t(ctx)
+            JOIN pid_lookup ctx_lookup ON ctx_lookup.pid = ctx.identifier
+        ) ctx_agg ON true
+        LEFT JOIN LATERAL (
+            SELECT list(kw_lookup.row_id) as row_ids
+            FROM UNNEST(s.keywords) as t(kw)
+            JOIN pid_lookup kw_lookup ON kw_lookup.pid = 'keyword:' || kw.keyword
+        ) kw_agg ON true
     """)
 
+    if verbose:
+        count = con.execute("SELECT COUNT(*) FROM sample_edges").fetchone()[0]
+        print(f"      6a: sample_edges created with {count:,} rows")
+        print("      6b: Creating event_edges table...")
+
     # Create event edge aggregations
+    # Use LATERAL JOIN for responsibility UNNEST
     con.execute("""
         CREATE TEMP TABLE event_edges AS
         SELECT
             s.sample_identifier,
             evt.row_id as event_row_id,
             site.row_id as p__sampling_site,
-            (SELECT list(agent.row_id)
-             FROM UNNEST(s.produced_by.responsibility) as resp
-             JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(resp.name)) || ':' || LOWER(TRIM(COALESCE(resp.role, 'unknown')))
-             WHERE resp.name IS NOT NULL AND TRIM(resp.name) != ''
-            ) as p__responsibility
+            resp_agg.row_ids as p__responsibility
         FROM source s
         JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
         LEFT JOIN sample_to_site sts ON sts.sample_identifier = s.sample_identifier
         LEFT JOIN pid_lookup site ON site.pid = sts.site_pid
+        LEFT JOIN LATERAL (
+            SELECT list(agent.row_id) as row_ids
+            FROM UNNEST(s.produced_by.responsibility) as t(resp)
+            JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(resp.name)) || ':' || LOWER(TRIM(COALESCE(resp.role, 'unknown')))
+            WHERE resp.name IS NOT NULL AND TRIM(resp.name) != ''
+        ) resp_agg ON true
         WHERE s.produced_by IS NOT NULL
     """)
+
+    if verbose:
+        count = con.execute("SELECT COUNT(*) FROM event_edges").fetchone()[0]
+        print(f"      6b: event_edges created with {count:,} rows")
+        print("      6c: Creating site_edges table...")
 
     # Create site edge aggregations
     con.execute("""
@@ -859,6 +884,10 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         LEFT JOIN pid_lookup loc ON loc.pid = s.sample_identifier || '_location'
         GROUP BY site.pid, site.row_id
     """)
+
+    if verbose:
+        count = con.execute("SELECT COUNT(*) FROM site_edges").fetchone()[0]
+        print(f"      6c: site_edges created with {count:,} rows")
 
     # Export wide format
     if verbose:
