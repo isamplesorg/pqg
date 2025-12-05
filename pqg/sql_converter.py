@@ -33,6 +33,8 @@ def convert_isamples_sql(
     output_parquet: str,
     wide: bool = False,
     verbose: bool = True,
+    dedupe_sites: bool = True,
+    site_precision: int = 5,
 ) -> Dict[str, Any]:
     """Convert iSamples export parquet to PQG format using pure SQL.
 
@@ -41,6 +43,8 @@ def convert_isamples_sql(
         output_parquet: Path to write PQG parquet
         wide: If True, output wide format (edges as columns); if False, narrow format
         verbose: Print progress messages
+        dedupe_sites: If True, deduplicate SamplingSites by rounded lat/lon + place_name
+        site_precision: Decimal places for lat/lon rounding when deduping (default 5 = ~1m)
 
     Returns:
         Dictionary with conversion statistics
@@ -66,9 +70,9 @@ def convert_isamples_sql(
     # This creates all entity nodes and edges in one pass
 
     if wide:
-        sql = _build_wide_sql(input_parquet, output_parquet)
+        sql = _build_wide_sql(input_parquet, output_parquet, dedupe_sites, site_precision)
     else:
-        sql = _build_narrow_sql(input_parquet, output_parquet)
+        sql = _build_narrow_sql(input_parquet, output_parquet, dedupe_sites, site_precision)
 
     if verbose:
         print("  Executing transformation...")
@@ -102,8 +106,27 @@ def convert_isamples_sql(
     return stats
 
 
-def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
-    """Build SQL for narrow PQG format (entities + edge rows)."""
+def _build_narrow_sql(input_parquet: str, output_parquet: str, dedupe_sites: bool = True, site_precision: int = 5) -> str:
+    """Build SQL for narrow PQG format (entities + edge rows).
+
+    Args:
+        input_parquet: Path to source parquet
+        output_parquet: Path for output parquet
+        dedupe_sites: If True, deduplicate SamplingSites by normalized key
+        site_precision: Decimal places for lat/lon rounding (default 5 = ~1m precision)
+    """
+
+    # Build site deduplication key expression
+    if dedupe_sites:
+        site_key_expr = f"""
+            'site:' ||
+            COALESCE(CAST(ROUND(produced_by.sampling_site.sample_location.latitude, {site_precision}) AS VARCHAR), 'NULL') || '_' ||
+            COALESCE(CAST(ROUND(produced_by.sampling_site.sample_location.longitude, {site_precision}) AS VARCHAR), 'NULL') || '_' ||
+            COALESCE(LOWER(TRIM(produced_by.sampling_site.label)), '') || '_' ||
+            COALESCE(LOWER(TRIM(CAST(produced_by.sampling_site.place_name AS VARCHAR))), '')
+        """
+    else:
+        site_key_expr = "sample_identifier || '_site'"
 
     return f"""
     COPY (
@@ -164,28 +187,55 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
         event_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM sample_max)) as max_id FROM events),
 
         -- 3. SamplingSite nodes (from produced_by.sampling_site)
-        sites AS (
+        -- Deduplicated by normalized key (rounded lat/lon + label + place_name)
+        sites_with_key AS (
             SELECT
-                (SELECT max_id FROM event_max) + row_number() OVER () as row_id,
-                sample_identifier || '_site' as pid,
-                'SamplingSite' as otype,
+                sample_identifier,
+                {site_key_expr} as site_pid,
                 produced_by.sampling_site.label as label,
                 produced_by.sampling_site.description as description,
-                NULL::VARCHAR[] as altids,
-                NULL::INTEGER as s,
-                NULL::VARCHAR as p,
-                NULL::INTEGER[] as o,
-                source_collection as n,
-                json_object(
-                    'place_name', produced_by.sampling_site.place_name
-                ) as properties,
-                NULL::GEOMETRY as geometry
+                source_collection,
+                produced_by.sampling_site.place_name as place_name
             FROM source
             WHERE produced_by IS NOT NULL
               AND produced_by.sampling_site IS NOT NULL
         ),
 
+        -- Deduplicated sites (keep first occurrence of each unique site)
+        sites_distinct AS (
+            SELECT DISTINCT ON (site_pid)
+                site_pid as pid,
+                label,
+                description,
+                source_collection as n,
+                place_name
+            FROM sites_with_key
+        ),
+
+        sites AS (
+            SELECT
+                (SELECT max_id FROM event_max) + row_number() OVER () as row_id,
+                pid,
+                'SamplingSite' as otype,
+                label,
+                description,
+                NULL::VARCHAR[] as altids,
+                NULL::INTEGER as s,
+                NULL::VARCHAR as p,
+                NULL::INTEGER[] as o,
+                n,
+                json_object('place_name', place_name) as properties,
+                NULL::GEOMETRY as geometry
+            FROM sites_distinct
+        ),
+
         site_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM event_max)) as max_id FROM sites),
+
+        -- Map sample_identifier -> site_pid for edge creation
+        sample_to_site AS (
+            SELECT sample_identifier, site_pid
+            FROM sites_with_key
+        ),
 
         -- 4. GeospatialCoordLocation nodes (from produced_by.sampling_site.sample_location)
         locations AS (
@@ -305,6 +355,56 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
 
         keyword_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM context_max)) as max_id FROM keywords),
 
+        -- 9. Agent nodes from registrant
+        registrants AS (
+            SELECT DISTINCT
+                (SELECT max_id FROM keyword_max) + row_number() OVER () as row_id,
+                'agent:' || LOWER(TRIM(registrant.name)) as pid,
+                'Agent' as otype,
+                registrant.name as label,
+                NULL as description,
+                NULL::VARCHAR[] as altids,
+                NULL::INTEGER as s,
+                NULL::VARCHAR as p,
+                NULL::INTEGER[] as o,
+                NULL as n,
+                json_object('role', 'registrant') as properties,
+                NULL::GEOMETRY as geometry
+            FROM source
+            WHERE registrant IS NOT NULL
+              AND registrant.name IS NOT NULL
+              AND TRIM(registrant.name) != ''
+        ),
+
+        registrant_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM keyword_max)) as max_id FROM registrants),
+
+        -- 10. Agent nodes from produced_by.responsibility (deduplicated by name + role)
+        responsibility_agents AS (
+            SELECT DISTINCT
+                (SELECT max_id FROM registrant_max) + row_number() OVER () as row_id,
+                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) as pid,
+                'Agent' as otype,
+                unnest.name as label,
+                NULL as description,
+                NULL::VARCHAR[] as altids,
+                NULL::INTEGER as s,
+                NULL::VARCHAR as p,
+                NULL::INTEGER[] as o,
+                NULL as n,
+                json_object('role', unnest.role) as properties,
+                NULL::GEOMETRY as geometry
+            FROM source, UNNEST(produced_by.responsibility) as unnest
+            WHERE produced_by IS NOT NULL
+              AND produced_by.responsibility IS NOT NULL
+              AND unnest.name IS NOT NULL
+              AND TRIM(unnest.name) != ''
+              -- Exclude if already in registrants
+              AND ('agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))))
+                  NOT IN (SELECT pid FROM registrants)
+        ),
+
+        agent_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM registrant_max)) as max_id FROM responsibility_agents),
+
         -- Combine all entities
         all_entities AS (
             SELECT * FROM samples
@@ -315,6 +415,8 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
             UNION ALL SELECT * FROM materials
             UNION ALL SELECT * FROM contexts
             UNION ALL SELECT * FROM keywords
+            UNION ALL SELECT * FROM registrants
+            UNION ALL SELECT * FROM responsibility_agents
         ),
 
         -- Build PID to row_id lookup
@@ -329,7 +431,7 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
         -- Edge: Sample -> produced_by -> Event
         edge_produced_by AS (
             SELECT
-                (SELECT max_id FROM keyword_max) + row_number() OVER () as row_id,
+                (SELECT max_id FROM agent_max) + row_number() OVER () as row_id,
                 s.sample_identifier || '_edge_produced_by' as pid,
                 '_edge_' as otype,
                 NULL as label,
@@ -347,9 +449,9 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
             WHERE s.produced_by IS NOT NULL
         ),
 
-        edge_produced_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM keyword_max)) as max_id FROM edge_produced_by),
+        edge_produced_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM agent_max)) as max_id FROM edge_produced_by),
 
-        -- Edge: Event -> sampling_site -> Site
+        -- Edge: Event -> sampling_site -> Site (using dedup mapping)
         edge_sampling_site AS (
             SELECT
                 (SELECT max_id FROM edge_produced_max) + row_number() OVER () as row_id,
@@ -366,18 +468,20 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
                 NULL::GEOMETRY as geometry
             FROM source s
             JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
-            JOIN pid_lookup site ON site.pid = s.sample_identifier || '_site'
+            JOIN sample_to_site sts ON sts.sample_identifier = s.sample_identifier
+            JOIN pid_lookup site ON site.pid = sts.site_pid
             WHERE s.produced_by IS NOT NULL
               AND s.produced_by.sampling_site IS NOT NULL
         ),
 
         edge_site_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM edge_produced_max)) as max_id FROM edge_sampling_site),
 
-        -- Edge: Site -> sample_location -> Location
+        -- Edge: Site -> sample_location -> Location (using dedup mapping)
+        -- Note: Each unique site gets ONE sample_location edge (first occurrence wins)
         edge_sample_location AS (
             SELECT
                 (SELECT max_id FROM edge_site_max) + row_number() OVER () as row_id,
-                s.sample_identifier || '_edge_sample_location' as pid,
+                site.pid || '_edge_sample_location' as pid,
                 '_edge_' as otype,
                 NULL as label,
                 NULL as description,
@@ -385,16 +489,19 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
                 site.row_id as s,
                 'sample_location' as p,
                 [loc.row_id]::INTEGER[] as o,
-                s.source_collection as n,
+                site.n as n,
                 NULL::JSON as properties,
                 NULL::GEOMETRY as geometry
-            FROM source s
-            JOIN pid_lookup site ON site.pid = s.sample_identifier || '_site'
+            FROM sites site
+            -- Get location from any sample that maps to this site
+            JOIN sample_to_site sts ON sts.site_pid = site.pid
+            JOIN source s ON s.sample_identifier = sts.sample_identifier
             JOIN pid_lookup loc ON loc.pid = s.sample_identifier || '_location'
             WHERE s.produced_by IS NOT NULL
               AND s.produced_by.sampling_site IS NOT NULL
               AND s.produced_by.sampling_site.sample_location IS NOT NULL
               AND s.produced_by.sampling_site.sample_location.latitude IS NOT NULL
+            QUALIFY row_number() OVER (PARTITION BY site.pid ORDER BY s.sample_identifier) = 1
         ),
 
         edge_location_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM edge_site_max)) as max_id FROM edge_sample_location),
@@ -489,6 +596,57 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
             WHERE s.keywords IS NOT NULL
         ),
 
+        edge_kw_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM edge_ctx_max)) as max_id FROM edge_keywords),
+
+        -- Edge: Sample -> registrant -> Agent
+        edge_registrant AS (
+            SELECT
+                (SELECT max_id FROM edge_kw_max) + row_number() OVER () as row_id,
+                s.sample_identifier || '_edge_registrant' as pid,
+                '_edge_' as otype,
+                NULL as label,
+                NULL as description,
+                NULL::VARCHAR[] as altids,
+                samp.row_id as s,
+                'registrant' as p,
+                [agent.row_id]::INTEGER[] as o,
+                s.source_collection as n,
+                NULL::JSON as properties,
+                NULL::GEOMETRY as geometry
+            FROM source s
+            JOIN pid_lookup samp ON samp.pid = s.sample_identifier
+            JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(s.registrant.name))
+            WHERE s.registrant IS NOT NULL
+              AND s.registrant.name IS NOT NULL
+              AND TRIM(s.registrant.name) != ''
+        ),
+
+        edge_reg_max AS (SELECT COALESCE(MAX(row_id), (SELECT max_id FROM edge_kw_max)) as max_id FROM edge_registrant),
+
+        -- Edge: Event -> responsibility -> Agent (for each agent in responsibility array)
+        edge_responsibility AS (
+            SELECT
+                (SELECT max_id FROM edge_reg_max) + row_number() OVER () as row_id,
+                s.sample_identifier || '_edge_responsibility_' || row_number() OVER (PARTITION BY s.sample_identifier) as pid,
+                '_edge_' as otype,
+                NULL as label,
+                NULL as description,
+                NULL::VARCHAR[] as altids,
+                evt.row_id as s,
+                'responsibility' as p,
+                [agent.row_id]::INTEGER[] as o,
+                s.source_collection as n,
+                json_object('role', unnest.role) as properties,
+                NULL::GEOMETRY as geometry
+            FROM source s, UNNEST(s.produced_by.responsibility) as unnest
+            JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
+            JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown')))
+            WHERE s.produced_by IS NOT NULL
+              AND s.produced_by.responsibility IS NOT NULL
+              AND unnest.name IS NOT NULL
+              AND TRIM(unnest.name) != ''
+        ),
+
         -- Combine all edges
         all_edges AS (
             SELECT * FROM edge_produced_by
@@ -498,6 +656,8 @@ def _build_narrow_sql(input_parquet: str, output_parquet: str) -> str:
             UNION ALL SELECT * FROM edge_material
             UNION ALL SELECT * FROM edge_context
             UNION ALL SELECT * FROM edge_keywords
+            UNION ALL SELECT * FROM edge_registrant
+            UNION ALL SELECT * FROM edge_responsibility
         ),
 
         -- Final output: entities + edges
