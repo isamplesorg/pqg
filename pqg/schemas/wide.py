@@ -30,14 +30,14 @@ CORE_COLUMNS = [
         name="tcreated",
         arrow_type=pa.int32(),
         nullable=True,
-        required=False,
+        required=True,
         description="Unix timestamp when record was created in this file"
     ),
     ColumnSpec(
         name="tmodified",
         arrow_type=pa.int32(),
         nullable=True,
-        required=False,
+        required=True,
         description="Unix timestamp when record was last modified"
     ),
     ColumnSpec(
@@ -55,75 +55,75 @@ GRAPH_COLUMNS = [
         name="n",
         arrow_type=pa.string(),
         nullable=True,
-        required=False,
+        required=True,
         description="Named graph identifier"
     ),
     ColumnSpec(
         name="altids",
         arrow_type=pa.list_(pa.string()),
         nullable=True,
-        required=False,
+        required=True,
         description="Alternate identifiers"
     ),
     ColumnSpec(
         name="geometry",
         arrow_type=pa.binary(),  # Can be GEOMETRY or BLOB
         nullable=True,
-        required=False,
+        required=True,
         description="Spatial geometry (WKB format)"
     ),
 ]
 
-# Entity-specific columns (same as narrow)
+# Entity-specific columns (same as narrow) - ALL REQUIRED for strict schema
 ENTITY_COLUMNS = [
     # SamplingEvent fields
-    ColumnSpec(name="authorized_by", arrow_type=pa.list_(pa.string()), required=False),
-    ColumnSpec(name="has_feature_of_interest", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="project", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="result_time", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="authorized_by", arrow_type=pa.list_(pa.string()), required=True),
+    ColumnSpec(name="has_feature_of_interest", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="project", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="result_time", arrow_type=pa.string(), required=True),
 
     # Agent fields
-    ColumnSpec(name="affiliation", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="contact_information", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="name", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="role", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="affiliation", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="contact_information", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="name", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="role", arrow_type=pa.string(), required=True),
 
     # MaterialSampleRecord fields
-    ColumnSpec(name="sampling_purpose", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="complies_with", arrow_type=pa.list_(pa.string()), required=False),
-    ColumnSpec(name="alternate_identifiers", arrow_type=pa.list_(pa.string()), required=False),
-    ColumnSpec(name="sample_identifier", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="dc_rights", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="last_modified_time", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="sampling_purpose", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="complies_with", arrow_type=pa.list_(pa.string()), required=True),
+    ColumnSpec(name="alternate_identifiers", arrow_type=pa.list_(pa.string()), required=True),
+    ColumnSpec(name="sample_identifier", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="dc_rights", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="last_modified_time", arrow_type=pa.string(), required=True),
 
     # SampleRelation fields
-    ColumnSpec(name="relationship", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="target", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="relationship", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="target", arrow_type=pa.string(), required=True),
 
     # GeospatialCoordLocation fields
-    ColumnSpec(name="elevation", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="latitude", arrow_type=pa.float64(), required=False),
-    ColumnSpec(name="longitude", arrow_type=pa.float64(), required=False),
-    ColumnSpec(name="obfuscated", arrow_type=pa.bool_(), required=False),
+    ColumnSpec(name="elevation", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="latitude", arrow_type=pa.float64(), required=True),
+    ColumnSpec(name="longitude", arrow_type=pa.float64(), required=True),
+    ColumnSpec(name="obfuscated", arrow_type=pa.bool_(), required=True),
 
     # IdentifiedConcept fields
-    ColumnSpec(name="scheme_uri", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="scheme_name", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="scheme_uri", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="scheme_name", arrow_type=pa.string(), required=True),
 
     # SamplingSite fields
-    ColumnSpec(name="is_part_of", arrow_type=pa.list_(pa.string()), required=False),
-    ColumnSpec(name="place_name", arrow_type=pa.list_(pa.string()), required=False),
+    ColumnSpec(name="is_part_of", arrow_type=pa.list_(pa.string()), required=True),
+    ColumnSpec(name="place_name", arrow_type=pa.list_(pa.string()), required=True),
 
     # MaterialSampleCuration fields
-    ColumnSpec(name="curation_location", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="access_constraints", arrow_type=pa.list_(pa.string()), required=False),
+    ColumnSpec(name="curation_location", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="access_constraints", arrow_type=pa.list_(pa.string()), required=True),
 
     # Common fields
-    ColumnSpec(name="description", arrow_type=pa.string(), required=False),
-    ColumnSpec(name="label", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="description", arrow_type=pa.string(), required=True),
+    ColumnSpec(name="label", arrow_type=pa.string(), required=True),
 
     # OpenContext extension
-    ColumnSpec(name="thumbnail_url", arrow_type=pa.string(), required=False),
+    ColumnSpec(name="thumbnail_url", arrow_type=pa.string(), required=True),
 ]
 
 

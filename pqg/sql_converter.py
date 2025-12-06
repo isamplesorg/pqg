@@ -182,7 +182,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            sample_identifier as sample_identifier_col,
+            sample_identifier as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -196,7 +196,7 @@ def _convert_staged(
             sample_location_longitude as longitude,
             NULL::BOOLEAN as obfuscated,
             NULL::VARCHAR as curation_location,
-            CAST(last_modified_time AS VARCHAR) as last_modified_time,
+            NULL::VARCHAR as last_modified_time,  -- Not always present in source
             NULL::VARCHAR[] as access_constraints,
             NULL::VARCHAR[] as place_name,
             description,
@@ -236,7 +236,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             produced_by.result_time as result_time,
             NULL::VARCHAR as contact_information,
@@ -314,7 +314,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -380,7 +380,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             CAST(produced_by.sampling_site.sample_location.elevation AS VARCHAR) as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -448,7 +448,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -508,7 +508,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -570,7 +570,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -633,7 +633,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -700,7 +700,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -766,7 +766,7 @@ def _convert_staged(
             NULL::VARCHAR[] as alternate_identifiers,
             NULL::VARCHAR as relationship,
             NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as sample_identifier,
             NULL::VARCHAR as dc_rights,
             NULL::VARCHAR as result_time,
             NULL::VARCHAR as contact_information,
@@ -826,38 +826,20 @@ def _convert_staged(
 
 
 def _edge_null_columns_sql() -> str:
-    """Generate NULL entity columns for edge rows (40-column schema)."""
-    return """
-            NULL::VARCHAR[] as authorized_by,
-            NULL::VARCHAR as has_feature_of_interest,
-            NULL::VARCHAR as affiliation,
-            NULL::VARCHAR as sampling_purpose,
-            NULL::VARCHAR[] as complies_with,
-            NULL::VARCHAR as project,
-            NULL::VARCHAR[] as alternate_identifiers,
-            NULL::VARCHAR as relationship,
-            NULL::VARCHAR as elevation,
-            NULL::VARCHAR as sample_identifier_col,
-            NULL::VARCHAR as dc_rights,
-            NULL::VARCHAR as result_time,
-            NULL::VARCHAR as contact_information,
-            NULL::DOUBLE as latitude,
-            NULL::VARCHAR as target,
-            NULL::VARCHAR as role,
-            NULL::VARCHAR as scheme_uri,
-            NULL::VARCHAR[] as is_part_of,
-            NULL::VARCHAR as scheme_name,
-            NULL::VARCHAR as name,
-            NULL::DOUBLE as longitude,
-            NULL::BOOLEAN as obfuscated,
-            NULL::VARCHAR as curation_location,
-            NULL::VARCHAR as last_modified_time,
-            NULL::VARCHAR[] as access_constraints,
-            NULL::VARCHAR[] as place_name,
-            NULL::VARCHAR as description,
-            NULL::VARCHAR as label,
-            NULL::VARCHAR as thumbnail_url
+    """Generate NULL entity columns for edge rows (40-column schema).
+
+    Derives column definitions from sql_columns.py to ensure consistency
+    and prevent column order drift.
     """
+    from pqg.schemas.sql_columns import NARROW_COLUMNS, get_null_columns_sql
+
+    # Entity columns are everything after the first 11 (core + edge + graph metadata)
+    # Core: row_id, pid, tcreated, tmodified, otype (5)
+    # Edge: s, p, o (3)
+    # Graph: n, altids, geometry (3)
+    ENTITY_COLUMNS = NARROW_COLUMNS[11:]  # columns 12-40 are entity-specific
+
+    return get_null_columns_sql(ENTITY_COLUMNS)
 
 
 def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose: bool) -> None:
@@ -1302,217 +1284,173 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         count = con.execute("SELECT COUNT(*) FROM site_edges").fetchone()[0]
         print(f"      6c: site_edges created with {count:,} rows")
 
-    # Export wide format with flattened columns (no s/p/o, no properties JSON)
+    # Export wide format with full 47-column schema (37 entity + 10 p__)
+    # Wide = Narrow columns minus s,p,o plus p__* relationship columns
     if verbose:
-        print("    Stage 7: Exporting wide format...")
+        print("    Stage 7: Exporting wide format with full 47 columns...")
 
-    # First, create enriched tables with flattened properties
-    # Need to join back to source to get the original field values
-    con.execute("""
-        CREATE TEMP TABLE samples_enriched AS
-        SELECT
-            samp.row_id,
-            samp.pid,
-            samp.otype,
-            samp.label,
-            samp.description,
-            samp.altids,
-            samp.n,
-            samp.geometry,
-            -- Flattened properties from source
-            src.sample_identifier,
-            src.sample_location_latitude as latitude,
-            src.sample_location_longitude as longitude,
-            NULL::VARCHAR as result_time,
-            NULL::VARCHAR as elevation,
-            NULL::VARCHAR[] as place_name
-        FROM samples samp
-        JOIN source src ON src.sample_identifier = samp.pid
-    """)
-
-    con.execute("""
-        CREATE TEMP TABLE events_enriched AS
-        SELECT
-            evt.row_id,
-            evt.pid,
-            evt.otype,
-            evt.label,
-            evt.description,
-            evt.altids,
-            evt.n,
-            evt.geometry,
-            -- Flattened properties from source
-            NULL::VARCHAR as sample_identifier,
-            NULL::DOUBLE as latitude,
-            NULL::DOUBLE as longitude,
-            src.produced_by.result_time as result_time,
-            NULL::VARCHAR as elevation,
-            NULL::VARCHAR[] as place_name
-        FROM events evt
-        JOIN source src ON evt.pid = src.sample_identifier || '_event'
-    """)
-
-    con.execute("""
-        CREATE TEMP TABLE sites_enriched AS
-        SELECT
-            site.row_id,
-            site.pid,
-            site.otype,
-            site.label,
-            site.description,
-            site.altids,
-            site.n,
-            site.geometry,
-            -- Flattened properties
-            NULL::VARCHAR as sample_identifier,
-            NULL::DOUBLE as latitude,
-            NULL::DOUBLE as longitude,
-            NULL::VARCHAR as result_time,
-            NULL::VARCHAR as elevation,
-            -- Get place_name from first matching source
-            (SELECT ARRAY[src.produced_by.sampling_site.place_name]::VARCHAR[]
-             FROM sample_to_site sts
-             JOIN source src ON src.sample_identifier = sts.sample_identifier
-             WHERE sts.site_pid = site.pid
-             LIMIT 1) as place_name
-        FROM sites site
-    """)
-
-    con.execute("""
-        CREATE TEMP TABLE locations_enriched AS
-        SELECT
-            loc.row_id,
-            loc.pid,
-            loc.otype,
-            loc.label,
-            loc.description,
-            loc.altids,
-            loc.n,
-            loc.geometry,
-            -- Use direct columns (no longer stored in JSON)
-            NULL::VARCHAR as sample_identifier,
-            loc.latitude,
-            loc.longitude,
-            NULL::VARCHAR as result_time,
-            loc.elevation,
-            NULL::VARCHAR[] as place_name
-        FROM locations loc
-    """)
+    # Generate NULL p__ columns SQL for entities without edges
+    null_p_cols = """
+                NULL::INTEGER[] as p__has_context_category,
+                NULL::INTEGER[] as p__has_material_category,
+                NULL::INTEGER[] as p__has_sample_object_type,
+                NULL::INTEGER[] as p__keywords,
+                NULL::INTEGER[] as p__produced_by,
+                NULL::INTEGER[] as p__registrant,
+                NULL::INTEGER[] as p__responsibility,
+                NULL::INTEGER[] as p__sample_location,
+                NULL::INTEGER[] as p__sampling_site,
+                NULL::INTEGER[] as p__site_location"""
 
     con.execute(f"""
         COPY (
-            -- Samples with edges
+            -- Samples with edges (MaterialSampleRecord)
             SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
-                -- Flattened columns
-                e.sample_identifier,
-                e.latitude,
-                e.longitude,
-                e.result_time,
-                e.elevation,
-                e.place_name,
-                -- p__ columns
-                [se.p__produced_by]::INTEGER[] as p__produced_by,
-                se.p__has_sample_object_type,
-                se.p__has_material_category,
+                -- Core (no s,p,o for wide)
+                samp.row_id, samp.pid, samp.tcreated, samp.tmodified, samp.otype,
+                -- Graph metadata
+                samp.n, samp.altids, samp.geometry,
+                -- All entity columns (29 columns)
+                samp.authorized_by, samp.has_feature_of_interest, samp.affiliation,
+                samp.sampling_purpose, samp.complies_with, samp.project,
+                samp.alternate_identifiers, samp.relationship, samp.elevation,
+                samp.sample_identifier, samp.dc_rights, samp.result_time,
+                samp.contact_information, samp.latitude, samp.target, samp.role,
+                samp.scheme_uri, samp.is_part_of, samp.scheme_name, samp.name,
+                samp.longitude, samp.obfuscated, samp.curation_location,
+                samp.last_modified_time, samp.access_constraints, samp.place_name,
+                samp.description, samp.label, samp.thumbnail_url,
+                -- p__ columns (10 columns)
                 se.p__has_context_category,
+                se.p__has_material_category,
+                se.p__has_sample_object_type,
                 se.p__keywords,
+                [se.p__produced_by]::INTEGER[] as p__produced_by,
                 [se.p__registrant]::INTEGER[] as p__registrant,
-                NULL::INTEGER[] as p__sampling_site,
-                NULL::INTEGER[] as p__sample_location,
                 NULL::INTEGER[] as p__responsibility,
-                NULL::INTEGER[] as p__site_location
-            FROM samples_enriched e
-            LEFT JOIN sample_edges se ON se.sample_row_id = e.row_id
-
-            UNION ALL
-
-            -- Events with edges
-            SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
-                e.sample_identifier,
-                e.latitude,
-                e.longitude,
-                e.result_time,
-                e.elevation,
-                e.place_name,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                [ee.p__sampling_site]::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__sample_location,
+                NULL::INTEGER[] as p__sampling_site,
+                NULL::INTEGER[] as p__site_location
+            FROM samples samp
+            LEFT JOIN sample_edges se ON se.sample_row_id = samp.row_id
+
+            UNION ALL
+
+            -- Events with edges (SamplingEvent)
+            SELECT
+                evt.row_id, evt.pid, evt.tcreated, evt.tmodified, evt.otype,
+                evt.n, evt.altids, evt.geometry,
+                evt.authorized_by, evt.has_feature_of_interest, evt.affiliation,
+                evt.sampling_purpose, evt.complies_with, evt.project,
+                evt.alternate_identifiers, evt.relationship, evt.elevation,
+                evt.sample_identifier, evt.dc_rights, evt.result_time,
+                evt.contact_information, evt.latitude, evt.target, evt.role,
+                evt.scheme_uri, evt.is_part_of, evt.scheme_name, evt.name,
+                evt.longitude, evt.obfuscated, evt.curation_location,
+                evt.last_modified_time, evt.access_constraints, evt.place_name,
+                evt.description, evt.label, evt.thumbnail_url,
+                NULL::INTEGER[] as p__has_context_category,
+                NULL::INTEGER[] as p__has_material_category,
+                NULL::INTEGER[] as p__has_sample_object_type,
+                NULL::INTEGER[] as p__keywords,
+                NULL::INTEGER[] as p__produced_by,
+                NULL::INTEGER[] as p__registrant,
                 ee.p__responsibility,
+                NULL::INTEGER[] as p__sample_location,
+                [ee.p__sampling_site]::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location
-            FROM events_enriched e
-            LEFT JOIN event_edges ee ON ee.event_row_id = e.row_id
+            FROM events evt
+            LEFT JOIN event_edges ee ON ee.event_row_id = evt.row_id
 
             UNION ALL
 
-            -- Sites with edges
+            -- Sites with edges (SamplingSite)
             SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
-                e.sample_identifier,
-                e.latitude,
-                e.longitude,
-                e.result_time,
-                e.elevation,
-                e.place_name,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL::INTEGER[],
+                site.row_id, site.pid, site.tcreated, site.tmodified, site.otype,
+                site.n, site.altids, site.geometry,
+                site.authorized_by, site.has_feature_of_interest, site.affiliation,
+                site.sampling_purpose, site.complies_with, site.project,
+                site.alternate_identifiers, site.relationship, site.elevation,
+                site.sample_identifier, site.dc_rights, site.result_time,
+                site.contact_information, site.latitude, site.target, site.role,
+                site.scheme_uri, site.is_part_of, site.scheme_name, site.name,
+                site.longitude, site.obfuscated, site.curation_location,
+                site.last_modified_time, site.access_constraints, site.place_name,
+                site.description, site.label, site.thumbnail_url,
+                NULL::INTEGER[] as p__has_context_category,
+                NULL::INTEGER[] as p__has_material_category,
+                NULL::INTEGER[] as p__has_sample_object_type,
+                NULL::INTEGER[] as p__keywords,
+                NULL::INTEGER[] as p__produced_by,
+                NULL::INTEGER[] as p__registrant,
+                NULL::INTEGER[] as p__responsibility,
                 [se.p__sample_location]::INTEGER[] as p__sample_location,
-                NULL::INTEGER[],
+                NULL::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location
-            FROM sites_enriched e
-            LEFT JOIN site_edges se ON se.site_row_id = e.row_id
+            FROM sites site
+            LEFT JOIN site_edges se ON se.site_row_id = site.row_id
 
             UNION ALL
 
-            -- Locations (no outgoing edges)
+            -- Locations (GeospatialCoordLocation - no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                sample_identifier, latitude, longitude, result_time, elevation, place_name,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM locations_enriched
+                loc.row_id, loc.pid, loc.tcreated, loc.tmodified, loc.otype,
+                loc.n, loc.altids, loc.geometry,
+                loc.authorized_by, loc.has_feature_of_interest, loc.affiliation,
+                loc.sampling_purpose, loc.complies_with, loc.project,
+                loc.alternate_identifiers, loc.relationship, loc.elevation,
+                loc.sample_identifier, loc.dc_rights, loc.result_time,
+                loc.contact_information, loc.latitude, loc.target, loc.role,
+                loc.scheme_uri, loc.is_part_of, loc.scheme_name, loc.name,
+                loc.longitude, loc.obfuscated, loc.curation_location,
+                loc.last_modified_time, loc.access_constraints, loc.place_name,
+                loc.description, loc.label, loc.thumbnail_url,
+                {null_p_cols}
+            FROM locations loc
 
             UNION ALL
 
-            -- All concept types (no outgoing edges)
+            -- IdentifiedConcept types (no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM object_types
-            UNION ALL
-            SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM materials
-            UNION ALL
-            SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM contexts
-            UNION ALL
-            SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM keywords
+                c.row_id, c.pid, c.tcreated, c.tmodified, c.otype,
+                c.n, c.altids, c.geometry,
+                c.authorized_by, c.has_feature_of_interest, c.affiliation,
+                c.sampling_purpose, c.complies_with, c.project,
+                c.alternate_identifiers, c.relationship, c.elevation,
+                c.sample_identifier, c.dc_rights, c.result_time,
+                c.contact_information, c.latitude, c.target, c.role,
+                c.scheme_uri, c.is_part_of, c.scheme_name, c.name,
+                c.longitude, c.obfuscated, c.curation_location,
+                c.last_modified_time, c.access_constraints, c.place_name,
+                c.description, c.label, c.thumbnail_url,
+                {null_p_cols}
+            FROM (
+                SELECT * FROM object_types
+                UNION ALL SELECT * FROM materials
+                UNION ALL SELECT * FROM contexts
+                UNION ALL SELECT * FROM keywords
+            ) c
 
             UNION ALL
 
-            -- All agent types (no outgoing edges)
+            -- Agent types (no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM registrants
-            UNION ALL
-            SELECT
-                row_id, pid, otype, label, description, altids, n, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM responsibility_agents
+                a.row_id, a.pid, a.tcreated, a.tmodified, a.otype,
+                a.n, a.altids, a.geometry,
+                a.authorized_by, a.has_feature_of_interest, a.affiliation,
+                a.sampling_purpose, a.complies_with, a.project,
+                a.alternate_identifiers, a.relationship, a.elevation,
+                a.sample_identifier, a.dc_rights, a.result_time,
+                a.contact_information, a.latitude, a.target, a.role,
+                a.scheme_uri, a.is_part_of, a.scheme_name, a.name,
+                a.longitude, a.obfuscated, a.curation_location,
+                a.last_modified_time, a.access_constraints, a.place_name,
+                a.description, a.label, a.thumbnail_url,
+                {null_p_cols}
+            FROM (
+                SELECT * FROM registrants
+                UNION ALL SELECT * FROM responsibility_agents
+            ) a
 
             ORDER BY row_id
         ) TO '{output_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)
