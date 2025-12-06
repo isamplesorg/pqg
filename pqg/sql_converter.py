@@ -100,6 +100,27 @@ def convert_isamples_sql(
             print(f"  Output size: {stats['output_size_mb']:.1f} MB")
         print(f"  Total time: {stats['total_time']:.2f}s")
 
+    # Validate output against schema
+    if verbose:
+        print("  Validating output schema...")
+
+    from pqg.schemas import NARROW_SCHEMA, WIDE_SCHEMA, validate_parquet
+    expected_schema = WIDE_SCHEMA if wide else NARROW_SCHEMA
+    validation_errors = validate_parquet(output_parquet, expected_schema)
+
+    if validation_errors:
+        stats["validation_errors"] = validation_errors
+        if verbose:
+            print(f"  ⚠️  Schema validation warnings ({len(validation_errors)}):")
+            for err in validation_errors[:5]:
+                print(f"      - {err}")
+            if len(validation_errors) > 5:
+                print(f"      ... and {len(validation_errors) - 5} more")
+    else:
+        stats["validation_errors"] = []
+        if verbose:
+            print("  ✅ Schema validation passed!")
+
     return stats
 
 
@@ -233,6 +254,8 @@ def _convert_staged(
     site_max = con.execute(f"SELECT COALESCE(MAX(row_id), {event_max}) FROM sites").fetchone()[0]
 
     # 2d. GeospatialCoordLocation nodes
+    # Note: Latitude/longitude stored in properties JSON for narrow format.
+    # Wide format extracts lat/lon directly during _build_wide_output_staged.
     con.execute(f"""
         CREATE TEMP TABLE locations AS
         SELECT
@@ -790,7 +813,16 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
 
 def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
-    """Build wide format output with p__* columns instead of edge rows."""
+    """Build wide format output with p__* columns instead of edge rows.
+
+    Wide format matches Eric's OpenContext schema:
+    - NO s, p, o columns (edge data stored in p__* columns)
+    - NO properties JSON column (flattened to direct columns)
+    - latitude, longitude as top-level DOUBLE columns
+    - place_name as VARCHAR[] column
+    - result_time, elevation as direct columns
+    - All 10 p__* columns present
+    """
 
     if verbose:
         print("    Stage 6: Building wide format columns...")
@@ -889,93 +921,216 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         count = con.execute("SELECT COUNT(*) FROM site_edges").fetchone()[0]
         print(f"      6c: site_edges created with {count:,} rows")
 
-    # Export wide format
+    # Export wide format with flattened columns (no s/p/o, no properties JSON)
     if verbose:
         print("    Stage 7: Exporting wide format...")
+
+    # First, create enriched tables with flattened properties
+    # Need to join back to source to get the original field values
+    con.execute("""
+        CREATE TEMP TABLE samples_enriched AS
+        SELECT
+            samp.row_id,
+            samp.pid,
+            samp.otype,
+            samp.label,
+            samp.description,
+            samp.altids,
+            samp.n,
+            samp.geometry,
+            -- Flattened properties from source
+            src.sample_identifier,
+            src.sample_location_latitude as latitude,
+            src.sample_location_longitude as longitude,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR[] as place_name
+        FROM samples samp
+        JOIN source src ON src.sample_identifier = samp.pid
+    """)
+
+    con.execute("""
+        CREATE TEMP TABLE events_enriched AS
+        SELECT
+            evt.row_id,
+            evt.pid,
+            evt.otype,
+            evt.label,
+            evt.description,
+            evt.altids,
+            evt.n,
+            evt.geometry,
+            -- Flattened properties from source
+            NULL::VARCHAR as sample_identifier,
+            NULL::DOUBLE as latitude,
+            NULL::DOUBLE as longitude,
+            src.produced_by.result_time as result_time,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR[] as place_name
+        FROM events evt
+        JOIN source src ON evt.pid = src.sample_identifier || '_event'
+    """)
+
+    con.execute("""
+        CREATE TEMP TABLE sites_enriched AS
+        SELECT
+            site.row_id,
+            site.pid,
+            site.otype,
+            site.label,
+            site.description,
+            site.altids,
+            site.n,
+            site.geometry,
+            -- Flattened properties
+            NULL::VARCHAR as sample_identifier,
+            NULL::DOUBLE as latitude,
+            NULL::DOUBLE as longitude,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as elevation,
+            -- Get place_name from first matching source
+            (SELECT ARRAY[src.produced_by.sampling_site.place_name]::VARCHAR[]
+             FROM sample_to_site sts
+             JOIN source src ON src.sample_identifier = sts.sample_identifier
+             WHERE sts.site_pid = site.pid
+             LIMIT 1) as place_name
+        FROM sites site
+    """)
+
+    con.execute("""
+        CREATE TEMP TABLE locations_enriched AS
+        SELECT
+            loc.row_id,
+            loc.pid,
+            loc.otype,
+            loc.label,
+            loc.description,
+            loc.altids,
+            loc.n,
+            loc.geometry,
+            -- Flattened properties (extract from JSON)
+            NULL::VARCHAR as sample_identifier,
+            CAST(json_extract_string(loc.properties, '$.latitude') AS DOUBLE) as latitude,
+            CAST(json_extract_string(loc.properties, '$.longitude') AS DOUBLE) as longitude,
+            NULL::VARCHAR as result_time,
+            json_extract_string(loc.properties, '$.elevation') as elevation,
+            NULL::VARCHAR[] as place_name
+        FROM locations loc
+    """)
 
     con.execute(f"""
         COPY (
             -- Samples with edges
             SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.properties, e.geometry,
-                se.p__produced_by,
+                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
+                -- Flattened columns
+                e.sample_identifier,
+                e.latitude,
+                e.longitude,
+                e.result_time,
+                e.elevation,
+                e.place_name,
+                -- p__ columns
+                [se.p__produced_by]::INTEGER[] as p__produced_by,
                 se.p__has_sample_object_type,
                 se.p__has_material_category,
                 se.p__has_context_category,
                 se.p__keywords,
-                se.p__registrant,
-                NULL::INTEGER as p__sampling_site,
-                NULL::INTEGER as p__sample_location,
-                NULL::INTEGER[] as p__responsibility
-            FROM samples e
+                [se.p__registrant]::INTEGER[] as p__registrant,
+                NULL::INTEGER[] as p__sampling_site,
+                NULL::INTEGER[] as p__sample_location,
+                NULL::INTEGER[] as p__responsibility,
+                NULL::INTEGER[] as p__site_location
+            FROM samples_enriched e
             LEFT JOIN sample_edges se ON se.sample_row_id = e.row_id
 
             UNION ALL
 
             -- Events with edges
             SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.properties, e.geometry,
+                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
+                e.sample_identifier,
+                e.latitude,
+                e.longitude,
+                e.result_time,
+                e.elevation,
+                e.place_name,
                 NULL, NULL, NULL, NULL, NULL, NULL,
-                ee.p__sampling_site,
-                NULL,
-                ee.p__responsibility
-            FROM events e
+                [ee.p__sampling_site]::INTEGER[] as p__sampling_site,
+                NULL::INTEGER[] as p__sample_location,
+                ee.p__responsibility,
+                NULL::INTEGER[] as p__site_location
+            FROM events_enriched e
             LEFT JOIN event_edges ee ON ee.event_row_id = e.row_id
 
             UNION ALL
 
             -- Sites with edges
             SELECT
-                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.properties, e.geometry,
+                e.row_id, e.pid, e.otype, e.label, e.description, e.altids, e.n, e.geometry,
+                e.sample_identifier,
+                e.latitude,
+                e.longitude,
+                e.result_time,
+                e.elevation,
+                e.place_name,
                 NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL,
-                se.p__sample_location,
-                NULL
-            FROM sites e
+                NULL::INTEGER[],
+                [se.p__sample_location]::INTEGER[] as p__sample_location,
+                NULL::INTEGER[],
+                NULL::INTEGER[] as p__site_location
+            FROM sites_enriched e
             LEFT JOIN site_edges se ON se.site_row_id = e.row_id
 
             UNION ALL
 
             -- Locations (no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            FROM locations
+                row_id, pid, otype, label, description, altids, n, geometry,
+                sample_identifier, latitude, longitude, result_time, elevation, place_name,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            FROM locations_enriched
 
             UNION ALL
 
             -- All concept types (no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM object_types
             UNION ALL
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM materials
             UNION ALL
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM contexts
             UNION ALL
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM keywords
 
             UNION ALL
 
             -- All agent types (no outgoing edges)
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM registrants
             UNION ALL
             SELECT
-                row_id, pid, otype, label, description, altids, n, properties, geometry,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                row_id, pid, otype, label, description, altids, n, geometry,
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
             FROM responsibility_agents
 
             ORDER BY row_id
