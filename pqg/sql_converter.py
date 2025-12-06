@@ -149,50 +149,113 @@ def _convert_staged(
         FROM read_parquet('{input_parquet}')
     """)
 
-    # Stage 2: Create entity tables
+    # Stage 2: Create entity tables with full 40-column schema
+    # All entity tables have identical column structure to support UNION ALL
     if verbose:
         print("    Stage 2: Creating entity tables...")
 
-    # 2a. MaterialSampleRecord nodes
+    # 2a. MaterialSampleRecord nodes (full 40-column schema)
     con.execute("""
         CREATE TEMP TABLE samples AS
         SELECT
+            -- Core identification
             src_row_id as row_id,
             sample_identifier as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'MaterialSampleRecord' as otype,
-            label,
-            description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
+            -- Graph metadata
             source_collection as n,
-            NULL::JSON as properties,
-            ST_POINT(sample_location_longitude, sample_location_latitude) as geometry
+            NULL::VARCHAR[] as altids,
+            ST_POINT(sample_location_longitude, sample_location_latitude) as geometry,
+            -- Entity columns (populate relevant ones)
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            CAST(sampling_purpose AS VARCHAR) as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            sample_identifier as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            sample_location_latitude as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            sample_location_longitude as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            CAST(last_modified_time AS VARCHAR) as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            description,
+            label,
+            NULL::VARCHAR as thumbnail_url
         FROM source
     """)
 
     sample_max = con.execute("SELECT COALESCE(MAX(row_id), 0) FROM samples").fetchone()[0]
 
-    # 2b. SamplingEvent nodes
+    # 2b. SamplingEvent nodes (full 40-column schema)
+    # Note: Only use fields that exist in the actual export data
     con.execute(f"""
         CREATE TEMP TABLE events AS
         SELECT
+            -- Core identification
             {sample_max} + row_number() OVER () as row_id,
             sample_identifier || '_event' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'SamplingEvent' as otype,
-            produced_by.label as label,
-            produced_by.description as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
+            -- Graph metadata
             source_collection as n,
-            json_object(
-                'result_time', produced_by.result_time,
-                'has_feature_of_interest', produced_by.has_feature_of_interest
-            ) as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (populate from available fields)
+            NULL::VARCHAR[] as authorized_by,
+            produced_by.has_feature_of_interest as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            produced_by.result_time as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            produced_by.description as description,
+            produced_by.label as label,
+            NULL::VARCHAR as thumbnail_url
         FROM source
         WHERE produced_by IS NOT NULL
     """)
@@ -222,22 +285,55 @@ def _convert_staged(
           AND produced_by.sampling_site IS NOT NULL
     """)
 
-    # Create deduplicated sites
+    # Create deduplicated sites (full 40-column schema)
+    # Note: Only use fields that exist in the actual export data
     con.execute(f"""
         CREATE TEMP TABLE sites AS
         SELECT
+            -- Core identification
             {event_max} + row_number() OVER () as row_id,
             site_pid as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'SamplingSite' as otype,
-            first(label) as label,
-            first(description) as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
+            -- Graph metadata
             first(n) as n,
-            json_object('place_name', first(place_name)) as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            first(place_name) as place_name,
+            first(description) as description,
+            first(label) as label,
+            NULL::VARCHAR as thumbnail_url
         FROM (
             SELECT
                 sts.site_pid,
@@ -253,31 +349,57 @@ def _convert_staged(
 
     site_max = con.execute(f"SELECT COALESCE(MAX(row_id), {event_max}) FROM sites").fetchone()[0]
 
-    # 2d. GeospatialCoordLocation nodes
-    # Note: Latitude/longitude stored in properties JSON for narrow format.
-    # Wide format extracts lat/lon directly during _build_wide_output_staged.
+    # 2d. GeospatialCoordLocation nodes (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE locations AS
         SELECT
+            -- Core identification
             {site_max} + row_number() OVER () as row_id,
             sample_identifier || '_location' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'GeospatialCoordLocation' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
+            -- Graph metadata
             source_collection as n,
-            json_object(
-                'latitude', produced_by.sampling_site.sample_location.latitude,
-                'longitude', produced_by.sampling_site.sample_location.longitude,
-                'elevation', produced_by.sampling_site.sample_location.elevation
-            ) as properties,
+            NULL::VARCHAR[] as altids,
             ST_POINT(
                 produced_by.sampling_site.sample_location.longitude,
                 produced_by.sampling_site.sample_location.latitude
-            ) as geometry
+            ) as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            CAST(produced_by.sampling_site.sample_location.elevation AS VARCHAR) as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            produced_by.sampling_site.sample_location.latitude as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            produced_by.sampling_site.sample_location.longitude as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            NULL::VARCHAR as label,
+            NULL::VARCHAR as thumbnail_url
         FROM source
         WHERE produced_by IS NOT NULL
           AND produced_by.sampling_site IS NOT NULL
@@ -291,8 +413,7 @@ def _convert_staged(
     if verbose:
         print("    Stage 3: Creating concept entities...")
 
-    # 3a. has_sample_object_type concepts
-    # FIX: Deduplicate FIRST, then assign row_id (DISTINCT + row_number() is a no-op)
+    # 3a. has_sample_object_type concepts (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE object_types AS
         WITH expanded AS (
@@ -303,25 +424,56 @@ def _convert_staged(
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
+            -- Core identification
             {location_max} + row_number() OVER () as row_id,
             pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'IdentifiedConcept' as otype,
-            pid as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('concept_type', 'sample_object_type') as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            pid as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup
     """)
 
     object_type_max = con.execute(f"SELECT COALESCE(MAX(row_id), {location_max}) FROM object_types").fetchone()[0]
 
-    # 3b. has_material_category concepts (excluding already added)
-    # FIX: Deduplicate FIRST, then assign row_id, then exclude
+    # 3b. has_material_category concepts (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE materials AS
         WITH expanded AS (
@@ -332,18 +484,50 @@ def _convert_staged(
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
+            -- Core identification
             {object_type_max} + row_number() OVER () as row_id,
             d.pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'IdentifiedConcept' as otype,
-            d.pid as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('concept_type', 'material_category') as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            d.pid as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup d
         LEFT JOIN object_types ot ON ot.pid = d.pid
         WHERE ot.pid IS NULL
@@ -351,8 +535,7 @@ def _convert_staged(
 
     material_max = con.execute(f"SELECT COALESCE(MAX(row_id), {object_type_max}) FROM materials").fetchone()[0]
 
-    # 3c. has_context_category concepts (excluding already added)
-    # FIX: Deduplicate FIRST, then assign row_id, then exclude using anti-join
+    # 3c. has_context_category concepts (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE contexts AS
         WITH expanded AS (
@@ -363,18 +546,50 @@ def _convert_staged(
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
+            -- Core identification
             {material_max} + row_number() OVER () as row_id,
             d.pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'IdentifiedConcept' as otype,
-            d.pid as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('concept_type', 'context_category') as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            d.pid as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup d
         LEFT JOIN object_types ot ON ot.pid = d.pid
         LEFT JOIN materials mat ON mat.pid = d.pid
@@ -383,30 +598,61 @@ def _convert_staged(
 
     context_max = con.execute(f"SELECT COALESCE(MAX(row_id), {material_max}) FROM contexts").fetchone()[0]
 
-    # 3d. Keywords
-    # FIX: Deduplicate FIRST, then assign row_id
+    # 3d. Keywords (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE keywords AS
         WITH expanded AS (
-            SELECT 'keyword:' || unnest.keyword AS pid, unnest.keyword AS label
+            SELECT 'keyword:' || unnest.keyword AS pid, unnest.keyword AS kw_label
             FROM source
             CROSS JOIN UNNEST(keywords) AS unnest
             WHERE keywords IS NOT NULL
         ),
-        dedup AS (SELECT DISTINCT pid, label FROM expanded)
+        dedup AS (SELECT DISTINCT pid, kw_label FROM expanded)
         SELECT
+            -- Core identification
             {context_max} + row_number() OVER () as row_id,
             pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'IdentifiedConcept' as otype,
-            label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('concept_type', 'keyword') as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            kw_label as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup
     """)
 
@@ -416,47 +662,77 @@ def _convert_staged(
     if verbose:
         print("    Stage 4: Creating agent entities...")
 
-    # 4a. Registrant agents
-    # FIX: Deduplicate FIRST, then assign row_id
+    # 4a. Registrant agents (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE registrants AS
         WITH expanded AS (
             SELECT
                 'agent:' || LOWER(TRIM(registrant.name)) AS pid,
-                registrant.name AS label
+                registrant.name AS agent_name
             FROM source
             WHERE registrant IS NOT NULL
               AND registrant.name IS NOT NULL
               AND TRIM(registrant.name) != ''
         ),
-        dedup AS (SELECT DISTINCT pid, label FROM expanded)
+        dedup AS (SELECT DISTINCT pid, agent_name FROM expanded)
         SELECT
+            -- Core identification
             {keyword_max} + row_number() OVER () as row_id,
             pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'Agent' as otype,
-            label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('role', 'registrant') as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            'registrant' as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            agent_name as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            agent_name as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup
     """)
 
     registrant_max = con.execute(f"SELECT COALESCE(MAX(row_id), {keyword_max}) FROM registrants").fetchone()[0]
 
-    # 4b. Responsibility agents (from produced_by.responsibility)
-    # FIX: Deduplicate FIRST, then assign row_id, then exclude using anti-join
+    # 4b. Responsibility agents (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE responsibility_agents AS
         WITH expanded AS (
             SELECT
                 'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) AS pid,
-                unnest.name AS label,
-                unnest.role AS role
+                unnest.name AS agent_name,
+                unnest.role AS agent_role
             FROM source
             CROSS JOIN UNNEST(produced_by.responsibility) AS unnest
             WHERE produced_by IS NOT NULL
@@ -464,20 +740,52 @@ def _convert_staged(
               AND unnest.name IS NOT NULL
               AND TRIM(unnest.name) != ''
         ),
-        dedup AS (SELECT DISTINCT pid, label, role FROM expanded)
+        dedup AS (SELECT DISTINCT pid, agent_name, agent_role FROM expanded)
         SELECT
+            -- Core identification
             {registrant_max} + row_number() OVER () as row_id,
             d.pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             'Agent' as otype,
-            d.label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns (NULL for entities)
             NULL::INTEGER as s,
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
-            NULL as n,
-            json_object('role', d.role) as properties,
-            NULL::GEOMETRY as geometry
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            d.agent_role as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            d.agent_name as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            d.agent_name as label,
+            NULL::VARCHAR as thumbnail_url
         FROM dedup d
         LEFT JOIN registrants r ON r.pid = d.pid
         WHERE r.pid IS NULL
@@ -517,28 +825,69 @@ def _convert_staged(
         _build_narrow_edges_staged(con, output_parquet, agent_max, verbose)
 
 
+def _edge_null_columns_sql() -> str:
+    """Generate NULL entity columns for edge rows (40-column schema)."""
+    return """
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            NULL::VARCHAR as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier_col,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            NULL::VARCHAR as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            NULL::VARCHAR as label,
+            NULL::VARCHAR as thumbnail_url
+    """
+
+
 def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose: bool) -> None:
     """Create edge rows and combine with entities for narrow format output."""
 
     if verbose:
         print("    Stage 6: Creating edge tables...")
 
-    # Edge: Sample -> produced_by -> Event
+    null_cols = _edge_null_columns_sql()
+
+    # Edge: Sample -> produced_by -> Event (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_produced_by AS
         SELECT
+            -- Core identification
             {agent_max} + row_number() OVER () as row_id,
             s.sample_identifier || '_edge_produced_by' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'produced_by' as p,
             [evt.row_id]::INTEGER[] as o,
+            -- Graph metadata
             s.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM source s
         JOIN pid_lookup samp ON samp.pid = s.sample_identifier
         JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
@@ -547,22 +896,26 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_pb_max = con.execute(f"SELECT COALESCE(MAX(row_id), {agent_max}) FROM edge_produced_by").fetchone()[0]
 
-    # Edge: Event -> sampling_site -> Site
+    # Edge: Event -> sampling_site -> Site (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_sampling_site AS
         SELECT
+            -- Core identification
             {edge_pb_max} + row_number() OVER () as row_id,
             s.sample_identifier || '_edge_sampling_site' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             evt.row_id as s,
             'sampling_site' as p,
             [site.row_id]::INTEGER[] as o,
+            -- Graph metadata
             s.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM source s
         JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
         JOIN sample_to_site sts ON sts.sample_identifier = s.sample_identifier
@@ -573,22 +926,26 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_ss_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_pb_max}) FROM edge_sampling_site").fetchone()[0]
 
-    # Edge: Site -> sample_location -> Location (one per unique site)
+    # Edge: Site -> sample_location -> Location (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_sample_location AS
         SELECT
+            -- Core identification
             {edge_ss_max} + row_number() OVER () as row_id,
             site.pid || '_edge_sample_location' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             site.row_id as s,
             'sample_location' as p,
             [loc.row_id]::INTEGER[] as o,
+            -- Graph metadata
             site.n as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM sites site
         JOIN sample_to_site sts ON sts.site_pid = site.pid
         JOIN source s ON s.sample_identifier = sts.sample_identifier
@@ -602,7 +959,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_sl_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ss_max}) FROM edge_sample_location").fetchone()[0]
 
-    # Edge: Sample -> has_sample_object_type -> Concept
+    # Edge: Sample -> has_sample_object_type -> Concept (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_object_type AS
         WITH expanded AS (
@@ -615,18 +972,22 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             WHERE s.has_sample_object_type IS NOT NULL
         )
         SELECT
+            -- Core identification
             {edge_sl_max} + row_number() OVER () as row_id,
             e.sample_identifier || '_edge_object_type_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'has_sample_object_type' as p,
             [concept.row_id]::INTEGER[] as o,
+            -- Graph metadata
             e.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM expanded e
         JOIN pid_lookup samp ON samp.pid = e.sample_identifier
         JOIN pid_lookup concept ON concept.pid = e.concept_id
@@ -634,7 +995,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_ot_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_sl_max}) FROM edge_object_type").fetchone()[0]
 
-    # Edge: Sample -> has_material_category -> Concept
+    # Edge: Sample -> has_material_category -> Concept (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_material AS
         WITH expanded AS (
@@ -647,18 +1008,22 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             WHERE s.has_material_category IS NOT NULL
         )
         SELECT
+            -- Core identification
             {edge_ot_max} + row_number() OVER () as row_id,
             e.sample_identifier || '_edge_material_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'has_material_category' as p,
             [concept.row_id]::INTEGER[] as o,
+            -- Graph metadata
             e.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM expanded e
         JOIN pid_lookup samp ON samp.pid = e.sample_identifier
         JOIN pid_lookup concept ON concept.pid = e.concept_id
@@ -666,7 +1031,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_mat_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ot_max}) FROM edge_material").fetchone()[0]
 
-    # Edge: Sample -> has_context_category -> Concept
+    # Edge: Sample -> has_context_category -> Concept (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_context AS
         WITH expanded AS (
@@ -679,18 +1044,22 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             WHERE s.has_context_category IS NOT NULL
         )
         SELECT
+            -- Core identification
             {edge_mat_max} + row_number() OVER () as row_id,
             e.sample_identifier || '_edge_context_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'has_context_category' as p,
             [concept.row_id]::INTEGER[] as o,
+            -- Graph metadata
             e.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM expanded e
         JOIN pid_lookup samp ON samp.pid = e.sample_identifier
         JOIN pid_lookup concept ON concept.pid = e.concept_id
@@ -698,7 +1067,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_ctx_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_mat_max}) FROM edge_context").fetchone()[0]
 
-    # Edge: Sample -> keywords -> Concept
+    # Edge: Sample -> keywords -> Concept (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_keywords AS
         WITH expanded AS (
@@ -711,18 +1080,22 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             WHERE s.keywords IS NOT NULL
         )
         SELECT
+            -- Core identification
             {edge_ctx_max} + row_number() OVER () as row_id,
             e.sample_identifier || '_edge_keyword_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'keywords' as p,
             [concept.row_id]::INTEGER[] as o,
+            -- Graph metadata
             e.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM expanded e
         JOIN pid_lookup samp ON samp.pid = e.sample_identifier
         JOIN pid_lookup concept ON concept.pid = e.concept_id
@@ -730,22 +1103,26 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_kw_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ctx_max}) FROM edge_keywords").fetchone()[0]
 
-    # Edge: Sample -> registrant -> Agent
+    # Edge: Sample -> registrant -> Agent (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_registrant AS
         SELECT
+            -- Core identification
             {edge_kw_max} + row_number() OVER () as row_id,
             s.sample_identifier || '_edge_registrant' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             samp.row_id as s,
             'registrant' as p,
             [agent.row_id]::INTEGER[] as o,
+            -- Graph metadata
             s.source_collection as n,
-            NULL::JSON as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM source s
         JOIN pid_lookup samp ON samp.pid = s.sample_identifier
         JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(s.registrant.name))
@@ -756,7 +1133,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_reg_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_kw_max}) FROM edge_registrant").fetchone()[0]
 
-    # Edge: Event -> responsibility -> Agent
+    # Edge: Event -> responsibility -> Agent (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_responsibility AS
         WITH expanded AS (
@@ -774,18 +1151,22 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
               AND TRIM(unnest.name) != ''
         )
         SELECT
+            -- Core identification
             {edge_reg_max} + row_number() OVER () as row_id,
             e.sample_identifier || '_edge_responsibility_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
             '_edge_' as otype,
-            NULL as label,
-            NULL as description,
-            NULL::VARCHAR[] as altids,
+            -- Edge columns
             evt.row_id as s,
             'responsibility' as p,
             [agent.row_id]::INTEGER[] as o,
+            -- Graph metadata
             e.source_collection as n,
-            json_object('role', e.agent_role) as properties,
-            NULL::GEOMETRY as geometry
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
         FROM expanded e
         JOIN pid_lookup evt ON evt.pid = e.sample_identifier || '_event'
         JOIN pid_lookup agent ON agent.pid = e.agent_pid
@@ -1008,12 +1389,12 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
             loc.altids,
             loc.n,
             loc.geometry,
-            -- Flattened properties (extract from JSON)
+            -- Use direct columns (no longer stored in JSON)
             NULL::VARCHAR as sample_identifier,
-            CAST(json_extract_string(loc.properties, '$.latitude') AS DOUBLE) as latitude,
-            CAST(json_extract_string(loc.properties, '$.longitude') AS DOUBLE) as longitude,
+            loc.latitude,
+            loc.longitude,
             NULL::VARCHAR as result_time,
-            json_extract_string(loc.properties, '$.elevation') as elevation,
+            loc.elevation,
             NULL::VARCHAR[] as place_name
         FROM locations loc
     """)
