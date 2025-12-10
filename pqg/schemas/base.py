@@ -19,6 +19,7 @@ class SchemaFormat(Enum):
     """PQG serialization formats."""
     NARROW = "narrow"
     WIDE = "wide"
+    EXPORT = "export"
     UNKNOWN = "unknown"
 
 
@@ -113,6 +114,20 @@ class ColumnSpec:
         # Float variations
         if pa.types.is_floating(actual) and pa.types.is_floating(expected):
             return True
+
+        # Timestamp variations (different precisions: us, ns, ms, s)
+        if pa.types.is_timestamp(actual) and pa.types.is_timestamp(expected):
+            # Allow different precisions, but check timezone compatibility
+            actual_tz = actual.tz
+            expected_tz = expected.tz
+            # Both have tz, both don't have tz, or expected doesn't care
+            if actual_tz == expected_tz:
+                return True
+            if expected_tz is None:
+                return True  # Expected doesn't require specific tz
+            if actual_tz is not None and expected_tz is not None:
+                return True  # Both have tz (may be different representations)
+            return False
 
         return False
 

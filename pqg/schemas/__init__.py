@@ -3,12 +3,13 @@
 This module provides canonical schema definitions for PQG parquet formats.
 All converters should validate output against these schemas.
 
-Two serialization formats are supported:
+Three serialization formats are supported:
 - NARROW: Entities + edge rows (normalized, more flexible)
 - WIDE: Entities with p__* columns (denormalized, faster queries)
+- EXPORT: Flat sample-centric with nested STRUCTs (fastest for UI)
 
 Usage:
-    from pqg.schemas import NARROW_SCHEMA, WIDE_SCHEMA, validate_parquet
+    from pqg.schemas import NARROW_SCHEMA, WIDE_SCHEMA, EXPORT_SCHEMA, validate_parquet
 
     # Check if a file matches the expected schema
     errors = validate_parquet('output.parquet', WIDE_SCHEMA)
@@ -34,16 +35,19 @@ from .base import (
 )
 from .narrow import NARROW_SCHEMA, NarrowSchemaValidator
 from .wide import WIDE_SCHEMA, WideSchemaValidator
+from .export import EXPORT_SCHEMA, ExportSchemaValidator
 
 __all__ = [
     # Schema definitions
     "NARROW_SCHEMA",
     "WIDE_SCHEMA",
+    "EXPORT_SCHEMA",
     # Format enum
     "SchemaFormat",
     # Validators
     "NarrowSchemaValidator",
     "WideSchemaValidator",
+    "ExportSchemaValidator",
     # Base classes and utilities
     "PQGSchema",
     "ColumnSpec",
