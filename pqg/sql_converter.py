@@ -908,19 +908,50 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
 
     edge_ss_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_pb_max}) FROM edge_sampling_site").fetchone()[0]
 
-    # Edge: Site -> sample_location -> Location (full 40-column schema)
+    # Edge: Event -> sample_location -> Location (full 40-column schema)
+    # NOTE: This is EVENT_SAMPLE_LOCATION edge type (SamplingEvent -> sample_location -> GeospatialCoordLocation)
     con.execute(f"""
-        CREATE TEMP TABLE edge_sample_location AS
+        CREATE TEMP TABLE edge_event_location AS
         SELECT
             -- Core identification
             {edge_ss_max} + row_number() OVER () as row_id,
-            site.pid || '_edge_sample_location' as pid,
+            evt.pid || '_edge_sample_location' as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
+            '_edge_' as otype,
+            -- Edge columns
+            evt.row_id as s,
+            'sample_location' as p,
+            [loc.row_id]::INTEGER[] as o,
+            -- Graph metadata
+            s.source_collection as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
+        FROM source s
+        JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
+        JOIN pid_lookup loc ON loc.pid = s.sample_identifier || '_location'
+        WHERE s.produced_by IS NOT NULL
+          AND s.sample_location_latitude IS NOT NULL
+    """)
+
+    edge_el_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ss_max}) FROM edge_event_location").fetchone()[0]
+
+    # Edge: Site -> site_location -> Location (full 40-column schema)
+    # NOTE: This is SITE_LOCATION edge type (SamplingSite -> site_location -> GeospatialCoordLocation)
+    con.execute(f"""
+        CREATE TEMP TABLE edge_site_location AS
+        SELECT
+            -- Core identification
+            {edge_el_max} + row_number() OVER () as row_id,
+            site.pid || '_edge_site_location' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
             -- Edge columns
             site.row_id as s,
-            'sample_location' as p,
+            'site_location' as p,
             [loc.row_id]::INTEGER[] as o,
             -- Graph metadata
             site.n as n,
@@ -939,7 +970,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         QUALIFY row_number() OVER (PARTITION BY site.pid ORDER BY s.sample_identifier) = 1
     """)
 
-    edge_sl_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ss_max}) FROM edge_sample_location").fetchone()[0]
+    edge_sl_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ss_max}) FROM edge_site_location").fetchone()[0]
 
     # Edge: Sample -> has_sample_object_type -> Concept (full 40-column schema)
     con.execute(f"""
@@ -1163,7 +1194,8 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT * FROM all_entities
             UNION ALL SELECT * FROM edge_produced_by
             UNION ALL SELECT * FROM edge_sampling_site
-            UNION ALL SELECT * FROM edge_sample_location
+            UNION ALL SELECT * FROM edge_event_location
+            UNION ALL SELECT * FROM edge_site_location
             UNION ALL SELECT * FROM edge_object_type
             UNION ALL SELECT * FROM edge_material
             UNION ALL SELECT * FROM edge_context
@@ -1247,11 +1279,13 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
             s.sample_identifier,
             evt.row_id as event_row_id,
             site.row_id as p__sampling_site,
+            loc.row_id as p__sample_location,
             resp_agg.row_ids as p__responsibility
         FROM source s
         JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
         LEFT JOIN sample_to_site sts ON sts.sample_identifier = s.sample_identifier
         LEFT JOIN pid_lookup site ON site.pid = sts.site_pid
+        LEFT JOIN pid_lookup loc ON loc.pid = s.sample_identifier || '_location'
         LEFT JOIN LATERAL (
             SELECT list(agent.row_id) as row_ids
             FROM UNNEST(s.produced_by.responsibility) as t(resp)
@@ -1272,7 +1306,7 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         SELECT
             site.pid as site_pid,
             site.row_id as site_row_id,
-            MIN(loc.row_id) as p__sample_location
+            MIN(loc.row_id) as p__site_location
         FROM sites site
         JOIN sample_to_site sts ON sts.site_pid = site.pid
         JOIN source s ON s.sample_identifier = sts.sample_identifier
@@ -1356,7 +1390,7 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 NULL::INTEGER[] as p__produced_by,
                 NULL::INTEGER[] as p__registrant,
                 ee.p__responsibility,
-                NULL::INTEGER[] as p__sample_location,
+                [ee.p__sample_location]::INTEGER[] as p__sample_location,
                 [ee.p__sampling_site]::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location
             FROM events evt
@@ -1384,9 +1418,9 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 NULL::INTEGER[] as p__produced_by,
                 NULL::INTEGER[] as p__registrant,
                 NULL::INTEGER[] as p__responsibility,
-                [se.p__sample_location]::INTEGER[] as p__sample_location,
+                NULL::INTEGER[] as p__sample_location,
                 NULL::INTEGER[] as p__sampling_site,
-                NULL::INTEGER[] as p__site_location
+                [se.p__site_location]::INTEGER[] as p__site_location
             FROM sites site
             LEFT JOIN site_edges se ON se.site_row_id = site.row_id
 
