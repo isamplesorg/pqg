@@ -253,6 +253,58 @@ WHERE label LIKE '%rock%'
 - Analyze in **Wide** (balanced)
 - Serve UI from **Export** (fastest)
 
+### 3.5 Canonical Formats (Normative)
+
+> **These three formats are the canonical representations of iSamples data.**
+> Source providers SHOULD convert their internal representations to one of these
+> formats before publishing. Custom or alternative schemas are discouraged.
+
+#### Why Only Three Formats?
+
+Each format serves a distinct purpose that the others cannot:
+
+| Format | Unique Capability | Cannot Be Replaced By |
+|--------|-------------------|----------------------|
+| **Export** | Single row per sample, no graph knowledge needed | Narrow/Wide require understanding entity relationships |
+| **Wide** | Entity-centric analytics without edge rows | Export loses entity independence, Narrow has JOIN overhead |
+| **Narrow** | Full graph fidelity, arbitrary traversals | Export/Wide cannot represent all relationship patterns |
+
+#### For Data Providers
+
+If you're creating iSamples-compatible parquet files:
+
+1. **DO**: Produce files in one of the three canonical formats
+2. **DO**: Use the schema definitions in `pqg/schemas/{narrow,wide,export}.py`
+3. **DO**: Validate output with `validate_parquet()` before publishing
+4. **DON'T**: Invent new column naming conventions (e.g., `Agent.name` vs `name`)
+5. **DON'T**: Create hybrid formats mixing conventions from different formats
+
+#### Format Selection Guide
+
+```
+What's your primary use case?
+│
+├─ "Archive data for long-term preservation"
+│   └─ Use NARROW (lossless, graph-complete)
+│
+├─ "Build dashboards / run analytics"
+│   └─ Use WIDE (fast entity queries, no JOINs for relationships)
+│
+├─ "Power a web UI for scientists"
+│   └─ Use EXPORT (one row per sample, nested STRUCTs)
+│
+└─ "All of the above"
+    └─ Produce NARROW, derive WIDE and EXPORT via converters
+```
+
+#### Interoperability Guarantee
+
+Files conforming to these schemas can be:
+- Combined via `UNION ALL` (Narrow + Narrow, Wide + Wide)
+- Converted between formats using `pqg.sql_converter`
+- Validated programmatically before publication
+- Queried with identical SQL patterns regardless of source
+
 ---
 
 ## 4. Schema Reference
