@@ -15,14 +15,14 @@ CORE_COLUMNS = [
     ColumnSpec(
         name="row_id",
         arrow_type=pa.int32(),  # Can also be int64
-        nullable=False,
+        nullable=True,  # Many parquet writers create nullable schemas by default
         required=True,
         description="Auto-incrementing integer primary key for performance"
     ),
     ColumnSpec(
         name="pid",
         arrow_type=pa.string(),
-        nullable=False,
+        nullable=True,  # Many parquet writers create nullable schemas by default
         required=True,
         description="Globally unique identifier (externally visible)"
     ),
@@ -199,6 +199,20 @@ RELATIONSHIP_COLUMNS = [
         nullable=True,
         required=True,
         description="Site coordinates (SamplingSite → GeospatialCoordLocation)"
+    ),
+    ColumnSpec(
+        name="p__curation",
+        arrow_type=pa.list_(pa.int32()),
+        nullable=True,
+        required=False,  # New column - not in older files
+        description="Curation info (MaterialSampleRecord → MaterialSampleCuration)"
+    ),
+    ColumnSpec(
+        name="p__related_resource",
+        arrow_type=pa.list_(pa.int32()),
+        nullable=True,
+        required=False,  # New column - not in older files
+        description="Related resources (MaterialSampleRecord → SampleRelation)"
     ),
 ]
 

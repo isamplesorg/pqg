@@ -69,6 +69,12 @@ class ColumnSpec:
                 f"expected {self.arrow_type}, got {actual_field.type}"
             )
 
+        # Check nullability - warn if spec says not nullable but schema allows nulls
+        if not self.nullable and actual_field.nullable:
+            errors.append(
+                f"Column '{self.name}' should not be nullable but parquet schema allows nulls"
+            )
+
         return errors
 
     def _types_compatible(self, actual: pa.DataType, expected: pa.DataType) -> bool:
