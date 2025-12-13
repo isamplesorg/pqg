@@ -5,7 +5,7 @@ description = "Exploring property graph representation in DuckDB"
 authors = [{ name = "datadave", email = "605409+datadavev@users.noreply.github.com" }]
 requires-python = ">=3.11"
 dependencies = [
-    "duckdb>=1.1.1",
+    "duckdb>=1.2.0",
     "graphviz>=0.20.3",
     "igraph>=0.11.8",
     "jsonasobj2>=1.0.4",

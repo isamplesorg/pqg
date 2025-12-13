@@ -157,7 +157,9 @@ Data
 ]
 ```
 
-These can be manually added to the 
+These properties are set during the creation of the parquet file.
+
+
 
 ## Data
 
