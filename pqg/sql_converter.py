@@ -918,6 +918,70 @@ def _convert_staged(
 
     curation_agent_max = con.execute(f"SELECT COALESCE(MAX(row_id), {curation_max}) FROM curation_agents").fetchone()[0]
 
+    # 4e. SampleRelation entities (from related_resource)
+    # NOTE: related_resource contains references to other samples (primarily GEOME data)
+    # Structure: STRUCT("target" VARCHAR)[] where target is the sample_identifier of related sample
+    con.execute(f"""
+        CREATE TEMP TABLE sample_relations AS
+        WITH expanded AS (
+            SELECT DISTINCT
+                unnest.target AS target_pid
+            FROM source
+            CROSS JOIN UNNEST(related_resource) AS unnest
+            WHERE related_resource IS NOT NULL
+              AND unnest.target IS NOT NULL
+              AND TRIM(unnest.target) != ''
+        )
+        SELECT
+            -- Core identification
+            {curation_agent_max} + row_number() OVER () as row_id,
+            'relation:' || target_pid as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
+            'SampleRelation' as otype,
+            -- Edge columns (NULL for entities)
+            NULL::INTEGER as s,
+            NULL::VARCHAR as p,
+            NULL::INTEGER[] as o,
+            -- Graph metadata
+            NULL::VARCHAR as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns
+            NULL::VARCHAR[] as authorized_by,
+            NULL::VARCHAR as has_feature_of_interest,
+            NULL::VARCHAR as affiliation,
+            NULL::VARCHAR as sampling_purpose,
+            NULL::VARCHAR[] as complies_with,
+            NULL::VARCHAR as project,
+            NULL::VARCHAR[] as alternate_identifiers,
+            'related' as relationship,
+            NULL::VARCHAR as elevation,
+            NULL::VARCHAR as sample_identifier,
+            NULL::VARCHAR as dc_rights,
+            NULL::VARCHAR as result_time,
+            NULL::VARCHAR as contact_information,
+            NULL::DOUBLE as latitude,
+            target_pid as target,
+            NULL::VARCHAR as role,
+            NULL::VARCHAR as scheme_uri,
+            NULL::VARCHAR[] as is_part_of,
+            NULL::VARCHAR as scheme_name,
+            NULL::VARCHAR as name,
+            NULL::DOUBLE as longitude,
+            NULL::BOOLEAN as obfuscated,
+            NULL::VARCHAR as curation_location,
+            NULL::VARCHAR as last_modified_time,
+            NULL::VARCHAR[] as access_constraints,
+            NULL::VARCHAR[] as place_name,
+            NULL::VARCHAR as description,
+            target_pid as label,
+            NULL::VARCHAR as thumbnail_url
+        FROM expanded
+    """)
+
+    sample_relation_max = con.execute(f"SELECT COALESCE(MAX(row_id), {curation_agent_max}) FROM sample_relations").fetchone()[0]
+
     # Stage 5: Combine all entities and build PID lookup
     if verbose:
         print("    Stage 5: Building entity lookup...")
@@ -936,6 +1000,7 @@ def _convert_staged(
         UNION ALL SELECT * FROM responsibility_agents
         UNION ALL SELECT * FROM curations
         UNION ALL SELECT * FROM curation_agents
+        UNION ALL SELECT * FROM sample_relations
     """)
 
     con.execute("""
@@ -1381,6 +1446,45 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         JOIN pid_lookup agent ON agent.pid = e.agent_pid
     """)
 
+    edge_cur_resp_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_cur_max}) FROM edge_curation_responsibility").fetchone()[0]
+
+    # Edge: Sample -> related_resource -> SampleRelation (MSR_RELATED_RESOURCE edge type)
+    # NOTE: This connects samples to their related samples (primarily GEOME genomic data)
+    con.execute(f"""
+        CREATE TEMP TABLE edge_related_resource AS
+        WITH expanded AS (
+            SELECT
+                s.sample_identifier,
+                s.source_collection,
+                unnest.target as target_pid
+            FROM source s
+            CROSS JOIN UNNEST(s.related_resource) as unnest
+            WHERE s.related_resource IS NOT NULL
+              AND unnest.target IS NOT NULL
+              AND TRIM(unnest.target) != ''
+        )
+        SELECT
+            -- Core identification
+            {edge_cur_resp_max} + row_number() OVER () as row_id,
+            e.sample_identifier || '_edge_related_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            NULL::INTEGER as tcreated,
+            NULL::INTEGER as tmodified,
+            '_edge_' as otype,
+            -- Edge columns
+            samp.row_id as s,
+            'related_resource' as p,
+            [rel.row_id]::INTEGER[] as o,
+            -- Graph metadata
+            e.source_collection as n,
+            NULL::VARCHAR[] as altids,
+            NULL::GEOMETRY as geometry,
+            -- Entity columns (all NULL for edges)
+            {null_cols}
+        FROM expanded e
+        JOIN pid_lookup samp ON samp.pid = e.sample_identifier
+        JOIN pid_lookup rel ON rel.pid = 'relation:' || e.target_pid
+    """)
+
     # Stage 7: Combine and export
     if verbose:
         print("    Stage 7: Combining and exporting...")
@@ -1400,6 +1504,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             UNION ALL SELECT * FROM edge_responsibility
             UNION ALL SELECT * FROM edge_msr_curation
             UNION ALL SELECT * FROM edge_curation_responsibility
+            UNION ALL SELECT * FROM edge_related_resource
             ORDER BY row_id
         ) TO '{output_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
@@ -1439,7 +1544,8 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
              FROM pid_lookup agent
              WHERE agent.pid = 'agent:' || LOWER(TRIM(s.registrant.name))
              LIMIT 1
-            ) as p__registrant
+            ) as p__registrant,
+            rel_agg.row_ids as p__related_resource
         FROM source s
         JOIN pid_lookup samp ON samp.pid = s.sample_identifier
         LEFT JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
@@ -1464,6 +1570,12 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
             FROM UNNEST(s.keywords) as t(kw)
             JOIN pid_lookup kw_lookup ON kw_lookup.pid = 'keyword:' || kw.keyword
         ) kw_agg ON true
+        LEFT JOIN LATERAL (
+            SELECT list(rel_lookup.row_id) as row_ids
+            FROM UNNEST(s.related_resource) as t(rel)
+            JOIN pid_lookup rel_lookup ON rel_lookup.pid = 'relation:' || rel.target
+            WHERE rel.target IS NOT NULL AND TRIM(rel.target) != ''
+        ) rel_agg ON true
     """)
 
     if verbose:
@@ -1591,7 +1703,7 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 NULL::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location,
                 [se.p__curation]::INTEGER[] as p__curation,
-                NULL::INTEGER[] as p__related_resource
+                se.p__related_resource
             FROM samples samp
             LEFT JOIN sample_edges se ON se.sample_row_id = samp.row_id
 
@@ -1747,6 +1859,24 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 UNION ALL SELECT * FROM responsibility_agents
                 UNION ALL SELECT * FROM curation_agents
             ) a
+
+            UNION ALL
+
+            -- SampleRelation entities (no outgoing edges)
+            SELECT
+                sr.row_id, sr.pid, sr.tcreated, sr.tmodified, sr.otype,
+                sr.n, sr.altids, sr.geometry,
+                sr.authorized_by, sr.has_feature_of_interest, sr.affiliation,
+                sr.sampling_purpose, sr.complies_with, sr.project,
+                sr.alternate_identifiers, sr.relationship, sr.elevation,
+                sr.sample_identifier, sr.dc_rights, sr.result_time,
+                sr.contact_information, sr.latitude, sr.target, sr.role,
+                sr.scheme_uri, sr.is_part_of, sr.scheme_name, sr.name,
+                sr.longitude, sr.obfuscated, sr.curation_location,
+                sr.last_modified_time, sr.access_constraints, sr.place_name,
+                sr.description, sr.label, sr.thumbnail_url,
+                {null_p_cols}
+            FROM sample_relations sr
 
             ORDER BY row_id
         ) TO '{output_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)
