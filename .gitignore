@@ -5,3 +5,4 @@
 *.log
 *.pkl
 /isamples/.idea
+/.idea
