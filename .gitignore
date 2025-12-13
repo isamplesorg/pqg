@@ -3,3 +3,7 @@
 *.ddb
 *.wal
 *.log
+*.pkl
+/isamples/.idea
+/.idea
+/pythonProject/.idea
