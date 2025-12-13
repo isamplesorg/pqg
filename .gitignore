@@ -1,10 +1,2 @@
 /.quarto/
-*.pyc
-*.ddb
-*.wal
-*.log
-*.pkl
-/isamples/.idea
-/.idea
-/pythonProject/.idea
-/.idea
+__pycache__/
