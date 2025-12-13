@@ -1,3 +1,4 @@
 /.quarto/
 __pycache__/
 .idea/misc.xml
+/.idea
