@@ -4,7 +4,7 @@
 **Tester**: Claude Code (Sonnet 4.5)
 **PR**: https://github.com/isamplesorg/pqg/pull/4
 **Branch**: `copilot/update-pqg-schema`
-**Test File**: `~/Data/iSample/oc_isamples_pqg.parquet` (691MB, 11.6M records)
+**Test File**: `~/Data/iSample/pqg_refining/oc_isamples_pqg.parquet` (691MB, 11.6M records)
 
 ---
 

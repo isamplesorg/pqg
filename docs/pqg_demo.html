@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PQG Interactive Demo - Property Query Graph in Action</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --surface: #16213e;
+            --surface-light: #0f3460;
+            --text: #e4e4e4;
+            --text-dim: #8892b0;
+            --accent: #4ecca3;
+            --accent-dim: #3ba787;
+            --warning: #ff6b6b;
+            --info: #74b9ff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            margin: 1.5rem 0 0.75rem 0;
+            color: var(--info);
+            border-bottom: 1px solid var(--surface-light);
+            padding-bottom: 0.25rem;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            margin-bottom: 1.5rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card {
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 1.5rem;
+            border: 1px solid var(--surface-light);
+        }
+
+        .card h3 {
+            font-size: 1rem;
+            color: var(--accent);
+            margin-bottom: 1rem;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        .status.loading {
+            background: var(--surface-light);
+            color: var(--info);
+        }
+
+        .status.ready {
+            background: rgba(78, 204, 163, 0.2);
+            color: var(--accent);
+        }
+
+        .status.error {
+            background: rgba(255, 107, 107, 0.2);
+            color: var(--warning);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--surface-light);
+            border-top-color: var(--info);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th, td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--surface-light);
+        }
+
+        th {
+            color: var(--text-dim);
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.05em;
+        }
+
+        tr:hover {
+            background: rgba(78, 204, 163, 0.05);
+        }
+
+        .number {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .percentage {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+        }
+
+        .query-editor {
+            background: var(--bg);
+            border: 1px solid var(--surface-light);
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            resize: vertical;
+            outline: none;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: var(--accent);
+            color: var(--bg);
+            border: none;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--accent-dim);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-outline:hover {
+            background: rgba(78, 204, 163, 0.1);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .results {
+            background: var(--bg);
+            border-radius: 4px;
+            padding: 1rem;
+            max-height: 400px;
+            overflow: auto;
+        }
+
+        .results pre {
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .metric {
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .timing {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-top: 0.5rem;
+        }
+
+        .format-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .format-box {
+            background: var(--bg);
+            padding: 1rem;
+            border-radius: 4px;
+        }
+
+        .format-box h4 {
+            color: var(--info);
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .format-box .timing {
+            margin-top: 0.25rem;
+        }
+
+        footer {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--surface-light);
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            text-align: center;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .intro {
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border-left: 4px solid var(--accent);
+        }
+
+        .intro p {
+            margin-bottom: 0.5rem;
+            line-height: 1.6;
+        }
+
+        .intro code {
+            background: var(--bg);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PQG Interactive Demo</h1>
+        <p class="subtitle">Property Query Graph format running in your browser via DuckDB-WASM</p>
+
+        <div class="intro">
+            <p><strong>What you're seeing:</strong> This page loads a 725MB scientific dataset (11.6M rows) directly in your browser. No server required.</p>
+            <p>PQG stores connected data (samples, events, locations, people) in a single Parquet file you can query with SQL.</p>
+            <p><strong>Data source:</strong> <code>OpenContext archaeological samples</code> &mdash; ~2.5M entity nodes + relationships</p>
+        </div>
+
+        <div id="status" class="status loading">
+            <div class="spinner"></div>
+            <span>Initializing DuckDB-WASM...</span>
+        </div>
+
+        <h2>Entity Distribution</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Entity Types (otype)</h3>
+                <div id="entity-table">Loading...</div>
+            </div>
+            <div class="card">
+                <h3>Quick Stats</h3>
+                <div id="quick-stats" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+                    <div class="metric">
+                        <div class="metric-value" id="total-rows">--</div>
+                        <div class="metric-label">Total Rows</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="entity-count">--</div>
+                        <div class="metric-label">Entities</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="edge-count">--</div>
+                        <div class="metric-label">Edges</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="sample-count">--</div>
+                        <div class="metric-label">Samples</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h2>Graph Traversal Demo</h2>
+        <div class="card">
+            <h3>Sample &rarr; Event &rarr; Location (3-hop traversal)</h3>
+            <p style="color: var(--text-dim); font-size: 0.85rem; margin-bottom: 1rem;">
+                Find samples with coordinates by traversing: MaterialSampleRecord &rarr; produced_by &rarr; SamplingEvent &rarr; sample_location &rarr; GeospatialCoordLocation
+            </p>
+            <div id="traversal-result">
+                <button class="btn" onclick="runTraversal()">Run Traversal Query</button>
+            </div>
+        </div>
+
+        <h2>Format Comparison: Narrow vs Wide</h2>
+        <div class="card">
+            <h3>Same Query, Different Formats</h3>
+            <p style="color: var(--text-dim); font-size: 0.85rem; margin-bottom: 1rem;">
+                Wide format embeds relationships as <code>p__*</code> arrays, avoiding JOIN overhead.
+            </p>
+            <button class="btn" onclick="runFormatComparison()">Compare Formats</button>
+            <div id="format-comparison-result" style="margin-top: 1rem;"></div>
+        </div>
+
+        <h2>Interactive SQL Query</h2>
+        <div class="card">
+            <h3>Run Your Own Queries</h3>
+            <div class="btn-group">
+                <button class="btn btn-outline" onclick="loadExample('entities')">Entity Types</button>
+                <button class="btn btn-outline" onclick="loadExample('samples')">Sample Preview</button>
+                <button class="btn btn-outline" onclick="loadExample('edges')">Edge Types</button>
+                <button class="btn btn-outline" onclick="loadExample('locations')">Find Locations</button>
+                <button class="btn btn-outline" onclick="loadExample('traversal')">Graph Traversal</button>
+            </div>
+            <div class="query-editor">
+                <textarea id="sql-query">SELECT otype, COUNT(*) as count
+FROM pqg
+GROUP BY otype
+ORDER BY count DESC</textarea>
+            </div>
+            <button class="btn" onclick="runQuery()" id="run-btn">Run Query</button>
+            <div class="timing" id="query-timing"></div>
+            <div class="results" id="query-results" style="margin-top: 1rem;">
+                <pre>Results will appear here...</pre>
+            </div>
+        </div>
+
+        <footer>
+            <p>
+                <strong>PQG Specification:</strong> <a href="PQG_SPECIFICATION.md">docs/PQG_SPECIFICATION.md</a> |
+                <strong>Source:</strong> <a href="https://github.com/isamplesorg/pqg">github.com/isamplesorg/pqg</a> |
+                <strong>Data:</strong> <a href="https://opencontext.org">OpenContext</a>
+            </p>
+            <p style="margin-top: 0.5rem;">
+                Powered by <a href="https://duckdb.org/docs/api/wasm/overview">DuckDB-WASM</a> |
+                No server required - runs entirely in your browser
+            </p>
+        </footer>
+    </div>
+
+    <script type="module">
+        // DuckDB-WASM setup
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
+
+        const NARROW_URL = 'https://storage.googleapis.com/opencontext-parquet/oc_isamples_pqg.parquet';
+        const WIDE_URL = 'https://storage.googleapis.com/opencontext-parquet/oc_isamples_pqg_wide.parquet';
+
+        let db, conn;
+
+        // Initialize DuckDB
+        async function initDB() {
+            const statusEl = document.getElementById('status');
+
+            try {
+                statusEl.innerHTML = '<div class="spinner"></div><span>Loading DuckDB-WASM bundles...</span>';
+
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+
+                const worker_url = URL.createObjectURL(
+                    new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+                );
+
+                const worker = new Worker(worker_url);
+                const logger = new duckdb.ConsoleLogger();
+                db = new duckdb.AsyncDuckDB(logger, worker);
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(worker_url);
+
+                conn = await db.connect();
+
+                // Register parquet file
+                statusEl.innerHTML = '<div class="spinner"></div><span>Registering remote Parquet file...</span>';
+                await conn.query(`CREATE OR REPLACE VIEW pqg AS SELECT * FROM read_parquet('${NARROW_URL}')`);
+                await conn.query(`CREATE OR REPLACE VIEW pqg_wide AS SELECT * FROM read_parquet('${WIDE_URL}')`);
+
+                statusEl.className = 'status ready';
+                statusEl.innerHTML = '<span>Ready - DuckDB connected to remote Parquet</span>';
+
+                // Load initial data
+                await loadEntityStats();
+
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.innerHTML = `<span>Error: ${error.message}</span>`;
+                console.error(error);
+            }
+        }
+
+        // Load entity statistics
+        async function loadEntityStats() {
+            // Entity type distribution
+            const entityResult = await conn.query(`
+                SELECT otype, COUNT(*) as count
+                FROM pqg
+                GROUP BY otype
+                ORDER BY count DESC
+            `);
+            const entityData = entityResult.toArray().map(row => ({
+                otype: row.otype,
+                count: Number(row.count)
+            }));
+
+            const totalRows = entityData.reduce((sum, r) => sum + r.count, 0);
+            const edgeCount = entityData.find(r => r.otype === '_edge_')?.count || 0;
+            const entityCount = totalRows - edgeCount;
+            const sampleCount = entityData.find(r => r.otype === 'MaterialSampleRecord')?.count || 0;
+
+            // Update quick stats
+            document.getElementById('total-rows').textContent = formatNumber(totalRows);
+            document.getElementById('entity-count').textContent = formatNumber(entityCount);
+            document.getElementById('edge-count').textContent = formatNumber(edgeCount);
+            document.getElementById('sample-count').textContent = formatNumber(sampleCount);
+
+            // Build entity table
+            let tableHtml = `<table>
+                <tr><th>Entity Type</th><th class="number">Count</th><th class="number">%</th></tr>
+            `;
+            for (const row of entityData) {
+                const pct = ((row.count / totalRows) * 100).toFixed(1);
+                tableHtml += `<tr>
+                    <td>${row.otype}</td>
+                    <td class="number">${formatNumber(row.count)}</td>
+                    <td class="number percentage">${pct}%</td>
+                </tr>`;
+            }
+            tableHtml += '</table>';
+            document.getElementById('entity-table').innerHTML = tableHtml;
+        }
+
+        // Format numbers with commas
+        function formatNumber(n) {
+            return n.toLocaleString();
+        }
+
+        // Run custom query
+        window.runQuery = async function() {
+            const sql = document.getElementById('sql-query').value;
+            const resultsEl = document.getElementById('query-results');
+            const timingEl = document.getElementById('query-timing');
+            const btn = document.getElementById('run-btn');
+
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            resultsEl.innerHTML = '<pre>Executing query...</pre>';
+
+            try {
+                const start = performance.now();
+                const result = await conn.query(sql);
+                const elapsed = performance.now() - start;
+
+                const data = result.toArray();
+                const columns = result.schema.fields.map(f => f.name);
+
+                // Build result table
+                if (data.length > 0) {
+                    let html = '<table><tr>';
+                    for (const col of columns) {
+                        html += `<th>${col}</th>`;
+                    }
+                    html += '</tr>';
+
+                    for (const row of data.slice(0, 100)) {
+                        html += '<tr>';
+                        for (const col of columns) {
+                            let val = row[col];
+                            if (val === null) val = '<span style="color: var(--text-dim)">NULL</span>';
+                            else if (typeof val === 'object') val = JSON.stringify(val);
+                            html += `<td>${val}</td>`;
+                        }
+                        html += '</tr>';
+                    }
+                    html += '</table>';
+                    if (data.length > 100) {
+                        html += `<p style="color: var(--text-dim); margin-top: 0.5rem;">Showing 100 of ${data.length} rows</p>`;
+                    }
+                    resultsEl.innerHTML = html;
+                } else {
+                    resultsEl.innerHTML = '<pre>No results</pre>';
+                }
+
+                timingEl.textContent = `Query completed in ${elapsed.toFixed(0)}ms (${data.length} rows)`;
+
+            } catch (error) {
+                resultsEl.innerHTML = `<pre style="color: var(--warning);">${error.message}</pre>`;
+                timingEl.textContent = '';
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Run Query';
+        };
+
+        // Load example queries
+        const examples = {
+            entities: `SELECT otype, COUNT(*) as count
+FROM pqg
+GROUP BY otype
+ORDER BY count DESC`,
+
+            samples: `SELECT pid, label, description, n as source_collection
+FROM pqg
+WHERE otype = 'MaterialSampleRecord'
+LIMIT 20`,
+
+            edges: `SELECT p as predicate, COUNT(*) as edge_count
+FROM pqg
+WHERE otype = '_edge_'
+GROUP BY p
+ORDER BY edge_count DESC`,
+
+            locations: `SELECT pid, latitude, longitude, label
+FROM pqg
+WHERE otype = 'GeospatialCoordLocation'
+  AND latitude IS NOT NULL
+LIMIT 20`,
+
+            traversal: `-- Find samples with their locations (3-hop traversal)
+SELECT
+    s.pid as sample_pid,
+    s.label as sample_label,
+    loc.latitude,
+    loc.longitude
+FROM pqg s
+JOIN pqg e1 ON e1.s = s.row_id AND e1.otype = '_edge_' AND e1.p = 'produced_by'
+JOIN pqg evt ON e1.o[1] = evt.row_id AND evt.otype = 'SamplingEvent'
+JOIN pqg e2 ON e2.s = evt.row_id AND e2.otype = '_edge_' AND e2.p = 'sample_location'
+JOIN pqg loc ON e2.o[1] = loc.row_id AND loc.otype = 'GeospatialCoordLocation'
+WHERE s.otype = 'MaterialSampleRecord'
+LIMIT 20`
+        };
+
+        window.loadExample = function(name) {
+            document.getElementById('sql-query').value = examples[name];
+        };
+
+        // Run traversal demo
+        window.runTraversal = async function() {
+            const resultEl = document.getElementById('traversal-result');
+            resultEl.innerHTML = '<div class="spinner" style="margin: 1rem;"></div>';
+
+            try {
+                const start = performance.now();
+                const result = await conn.query(`
+                    SELECT COUNT(DISTINCT s.row_id) as samples_with_coords
+                    FROM pqg s
+                    JOIN pqg e1 ON e1.s = s.row_id AND e1.otype = '_edge_' AND e1.p = 'produced_by'
+                    JOIN pqg evt ON e1.o[1] = evt.row_id
+                    JOIN pqg e2 ON e2.s = evt.row_id AND e2.otype = '_edge_' AND e2.p = 'sample_location'
+                    JOIN pqg loc ON e2.o[1] = loc.row_id
+                    WHERE s.otype = 'MaterialSampleRecord'
+                      AND loc.latitude IS NOT NULL
+                `);
+                const elapsed = performance.now() - start;
+
+                const count = Number(result.toArray()[0].samples_with_coords);
+
+                resultEl.innerHTML = `
+                    <div class="metric" style="text-align: left;">
+                        <div class="metric-value">${formatNumber(count)}</div>
+                        <div class="metric-label">Samples with coordinates (via 3-hop traversal)</div>
+                        <div class="timing">Query time: ${elapsed.toFixed(0)}ms</div>
+                    </div>
+                    <button class="btn btn-outline" onclick="runTraversal()" style="margin-top: 1rem;">Run Again</button>
+                `;
+
+            } catch (error) {
+                resultEl.innerHTML = `<pre style="color: var(--warning);">${error.message}</pre>`;
+            }
+        };
+
+        // Format comparison
+        window.runFormatComparison = async function() {
+            const resultEl = document.getElementById('format-comparison-result');
+            resultEl.innerHTML = '<div class="spinner" style="margin: 1rem;"></div>';
+
+            try {
+                // Narrow format query (with JOINs)
+                const narrowStart = performance.now();
+                await conn.query(`
+                    SELECT COUNT(*) as cnt
+                    FROM pqg s
+                    WHERE s.otype = 'MaterialSampleRecord'
+                `);
+                const narrowTime = performance.now() - narrowStart;
+
+                // Wide format query (direct filter)
+                const wideStart = performance.now();
+                await conn.query(`
+                    SELECT COUNT(*) as cnt
+                    FROM pqg_wide
+                    WHERE otype = 'MaterialSampleRecord'
+                `);
+                const wideTime = performance.now() - wideStart;
+
+                // Wide with relationship check
+                const wideEdgeStart = performance.now();
+                await conn.query(`
+                    SELECT COUNT(*) as cnt
+                    FROM pqg_wide
+                    WHERE otype = 'MaterialSampleRecord'
+                      AND p__produced_by IS NOT NULL
+                `);
+                const wideEdgeTime = performance.now() - wideEdgeStart;
+
+                resultEl.innerHTML = `
+                    <div class="format-comparison">
+                        <div class="format-box">
+                            <h4>Narrow Format</h4>
+                            <p>Count MaterialSampleRecord</p>
+                            <p class="timing">${narrowTime.toFixed(0)}ms</p>
+                            <p style="color: var(--text-dim); font-size: 0.75rem; margin-top: 0.5rem;">
+                                Requires filtering otype column
+                            </p>
+                        </div>
+                        <div class="format-box">
+                            <h4>Wide Format</h4>
+                            <p>Count MaterialSampleRecord</p>
+                            <p class="timing">${wideTime.toFixed(0)}ms</p>
+                            <p style="color: var(--text-dim); font-size: 0.75rem; margin-top: 0.5rem;">
+                                Same query, no edge rows
+                            </p>
+                        </div>
+                    </div>
+                    <div class="format-box" style="margin-top: 1rem;">
+                        <h4>Wide Format - With Relationship Filter</h4>
+                        <p>Samples with p__produced_by populated</p>
+                        <p class="timing">${wideEdgeTime.toFixed(0)}ms</p>
+                        <p style="color: var(--text-dim); font-size: 0.75rem; margin-top: 0.5rem;">
+                            No JOINs needed - relationships are embedded as arrays
+                        </p>
+                    </div>
+                    <button class="btn btn-outline" onclick="runFormatComparison()" style="margin-top: 1rem;">Run Again</button>
+                `;
+
+            } catch (error) {
+                resultEl.innerHTML = `<pre style="color: var(--warning);">${error.message}</pre>`;
+            }
+        };
+
+        // Initialize on load
+        initDB();
+    </script>
+</body>
+</html>
