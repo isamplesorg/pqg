@@ -1696,13 +1696,13 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 se.p__has_material_category,
                 se.p__has_sample_object_type,
                 se.p__keywords,
-                [se.p__produced_by]::INTEGER[] as p__produced_by,
-                [se.p__registrant]::INTEGER[] as p__registrant,
+                CASE WHEN se.p__produced_by IS NOT NULL THEN [se.p__produced_by] ELSE NULL END::INTEGER[] as p__produced_by,
+                CASE WHEN se.p__registrant IS NOT NULL THEN [se.p__registrant] ELSE NULL END::INTEGER[] as p__registrant,
                 NULL::INTEGER[] as p__responsibility,
                 NULL::INTEGER[] as p__sample_location,
                 NULL::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location,
-                [se.p__curation]::INTEGER[] as p__curation,
+                CASE WHEN se.p__curation IS NOT NULL THEN [se.p__curation] ELSE NULL END::INTEGER[] as p__curation,
                 se.p__related_resource
             FROM samples samp
             LEFT JOIN sample_edges se ON se.sample_row_id = samp.row_id
@@ -1729,8 +1729,8 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 NULL::INTEGER[] as p__produced_by,
                 NULL::INTEGER[] as p__registrant,
                 ee.p__responsibility,
-                [ee.p__sample_location]::INTEGER[] as p__sample_location,
-                [ee.p__sampling_site]::INTEGER[] as p__sampling_site,
+                CASE WHEN ee.p__sample_location IS NOT NULL THEN [ee.p__sample_location] ELSE NULL END::INTEGER[] as p__sample_location,
+                CASE WHEN ee.p__sampling_site IS NOT NULL THEN [ee.p__sampling_site] ELSE NULL END::INTEGER[] as p__sampling_site,
                 NULL::INTEGER[] as p__site_location,
                 NULL::INTEGER[] as p__curation,
                 NULL::INTEGER[] as p__related_resource
@@ -1761,7 +1761,7 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
                 NULL::INTEGER[] as p__responsibility,
                 NULL::INTEGER[] as p__sample_location,
                 NULL::INTEGER[] as p__sampling_site,
-                [se.p__site_location]::INTEGER[] as p__site_location,
+                CASE WHEN se.p__site_location IS NOT NULL THEN [se.p__site_location] ELSE NULL END::INTEGER[] as p__site_location,
                 NULL::INTEGER[] as p__curation,
                 NULL::INTEGER[] as p__related_resource
             FROM sites site
