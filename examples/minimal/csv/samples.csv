@@ -1,0 +1,4 @@
+sample_id,label,description,last_modified_time,event_id,material_category,sample_object_type,registrant_id
+ark:/99999/example001,Rock Sample MR-001 (Parent),"Basalt collected during 2024 field survey. Fresh, unweathered sample from recent lava flow.",2024-06-15T10:30:00Z,event:example001,rock,physicalspecimen,agent:jsmith
+ark:/99999/example002,Rock Sample MR-001-A (Child - Thin Section),Thin section prepared from parent sample MR-001 for petrographic analysis.,2024-07-01T14:00:00Z,event:example002,rock,thinsection,agent:jsmith
+ark:/99999/example003,Rock Sample MR-002,"Second basalt sample from same site, collected 10m away from MR-001.",2024-06-15T11:00:00Z,event:example003,rock,physicalspecimen,agent:jsmith
