@@ -1,0 +1,86 @@
+{
+  "sample_identifier": "ark:/99999/example001",
+  "label": "Rock Sample from Mount Rainier",
+  "description": "Basalt collected during 2024 field survey. Fresh, unweathered sample from recent lava flow.",
+  "last_modified_time": "2024-06-15T10:30:00Z",
+  "produced_by": {
+    "label": "Mount Rainier Field Collection 2024-06-10",
+    "description": "Field collection during summer geology survey",
+    "result_time": "2024-06-10",
+    "project": "Cascade Volcanic Monitoring Project",
+    "has_feature_of_interest": "Recent lava flow on Mount Rainier",
+    "sampling_site": {
+      "label": "Mount Rainier Summit Area",
+      "description": "Collection site near the summit crater rim",
+      "place_name": ["Mount Rainier", "Pierce County", "Washington", "USA"],
+      "sample_location": {
+        "latitude": 46.8523,
+        "longitude": -121.7603,
+        "elevation": "4392 m above mean sea level",
+        "obfuscated": false
+      }
+    },
+    "responsibility": [
+      {
+        "name": "Jane Smith",
+        "role": "collector",
+        "affiliation": "University of Washington",
+        "contact_information": "jsmith@uw.edu"
+      }
+    ]
+  },
+  "has_material_category": [
+    {
+      "identifier": "https://w3id.org/isample/vocabulary/material/1.0/ite",
+      "label": "ite",
+      "scheme_name": "iSamples Material Type"
+    }
+  ],
+  "has_context_category": [
+    {
+      "identifier": "https://w3id.org/isample/vocabulary/sampledfeature/1.0/activehumanoccupationsite",
+      "label": "Earth interior",
+      "scheme_name": "iSamples Sampled Feature Type"
+    }
+  ],
+  "has_sample_object_type": [
+    {
+      "identifier": "https://w3id.org/isample/vocabulary/specimentype/1.0/physicalspecimen",
+      "label": "Physical specimen",
+      "scheme_name": "iSamples Specimen Type"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "basalt",
+      "scheme_name": "Free text"
+    },
+    {
+      "keyword": "volcanic rock",
+      "scheme_name": "Free text"
+    },
+    {
+      "keyword": "Cascade Range",
+      "scheme_name": "Geographic"
+    }
+  ],
+  "registrant": {
+    "name": "Jane Smith",
+    "affiliation": "University of Washington",
+    "contact_information": "jsmith@uw.edu",
+    "role": "registrant"
+  },
+  "curation": {
+    "label": "UW Geology Sample Collection",
+    "description": "Stored in climate-controlled facility",
+    "curation_location": "University of Washington, Burke Museum, Room 142, Drawer B-15",
+    "access_constraints": ["By appointment only", "Research use only"],
+    "responsibility": [
+      {
+        "name": "Collections Manager",
+        "role": "curator",
+        "affiliation": "Burke Museum"
+      }
+    ]
+  }
+}
