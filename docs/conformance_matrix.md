@@ -105,13 +105,21 @@ useful.
 | `latitude` | ✅ | ✅ | ✅ | ✅ | ❌ | — | — | 🔄 `center_lat` |
 | `longitude` | ✅ | ✅ | ✅ | ✅ | ❌ | — | — | 🔄 `center_lng` |
 | `bbox` | ⚠️ derived (`lat BETWEEN … AND lon BETWEEN …`) | same | same | ⚠️ same | ❌ | — | — | ⚠️ centroid |
-| `h3[res4]` | ❌ | ✅ | ❌ | ❌ | ❌ | — | — | ✅ (when `resolution=4`) |
-| `h3[res6]` | ❌ | ✅ | ❌ | ❌ | ❌ | — | — | ✅ (when `resolution=6`) |
-| `h3[res8]` | ❌ | ✅ | ❌ | ✅ (+ `h3_res8_hex`) | ❌ | — | — | ✅ |
+| `h3[res4]` | ❌ | ✅ | ❌ | ❌ | ❌ | — | — | 🔄 `h3_cell` WHERE `resolution=4` |
+| `h3[res6]` | ❌ | ✅ | ❌ | ❌ | ❌ | — | — | 🔄 `h3_cell` WHERE `resolution=6` |
+| `h3[res8]` | ❌ | ✅ | ❌ | ✅ (+ `h3_res8_hex`) | ❌ | — | — | 🔄 `h3_cell` WHERE `resolution=8` |
 
 **H3 filtering at res 4 or 6 requires `wide_h3` or `h3_summary`** —
 plain `wide` and `narrow` do not carry H3 columns. This has been a
 source of confusion.
+
+**Column-name gotcha in `h3_summary_*`**: the summary tier files do
+NOT ship `h3_res4` / `h3_res6` / `h3_res8` columns; they ship a
+single `h3_cell` (UBIGINT) column with a `resolution` filter. Queries
+that look like `WHERE h3_res6 = ...` will fail against the summary
+files — use `WHERE h3_cell = ... AND resolution = 6`. (The `wide_h3`
+file does have the direct `h3_res{N}` columns, which is why `wide_h3`
+is ✅ but `h3_summary` is 🔄.)
 
 ### 3.5 Curation (QUERY_SPEC §2.5)
 
