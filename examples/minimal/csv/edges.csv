@@ -1,0 +1,14 @@
+subject_id,predicate,object_id,description
+ark:/99999/example001,produced_by,event:example001,Sample was produced by this sampling event
+ark:/99999/example002,produced_by,event:example002,Sample was produced by this sampling event
+ark:/99999/example003,produced_by,event:example003,Sample was produced by this sampling event
+ark:/99999/example002,derivedFrom,ark:/99999/example001,Thin section derived from parent rock sample
+ark:/99999/example003,relatedTo,ark:/99999/example001,Sibling sample from same site
+event:example001,sample_location,loc:rainier001,Event occurred at this location
+event:example003,sample_location,loc:rainier002,Event occurred at this location
+event:example001,sampling_site,site:rainier001,Event occurred at this site
+event:example003,sampling_site,site:rainier001,Event occurred at this site
+site:rainier001,site_location,loc:rainier001,Site is at this location
+ark:/99999/example001,registrant,agent:jsmith,Sample registered by this agent
+ark:/99999/example002,registrant,agent:jsmith,Sample registered by this agent
+ark:/99999/example003,registrant,agent:jsmith,Sample registered by this agent

@@ -1,0 +1,29 @@
+{
+  "baseline": {
+    "bbox_query_ms": 170.0129508972168,
+    "bbox_facet_ms": 186.75613403320312,
+    "radius_query_ms": 179.39233779907227
+  },
+  "with_h3": {
+    "bbox_query_ms": 35.030364990234375,
+    "bbox_facet_ms": 38.38610649108887,
+    "cluster_query_ms": 51.71322822570801
+  },
+  "speedup": {
+    "bbox": 4.85,
+    "facet": 4.87
+  },
+  "file_size": {
+    "original_mb": 282,
+    "with_h3_mb": 292.4,
+    "increase_pct": 3.7,
+    "generation_time_s": 41.6
+  },
+  "h3_stats": {
+    "unique_res4_cells": 38406,
+    "unique_res6_cells": 111681,
+    "unique_res8_cells": 175653,
+    "total_sample_rows": 6680932,
+    "rows_with_coords": 5980282
+  }
+}

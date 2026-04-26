@@ -1,0 +1,146 @@
+[
+  {
+    "sample_identifier": "ark:/99999/example001",
+    "label": "Rock Sample MR-001 (Parent)",
+    "description": "Basalt collected during 2024 field survey. Fresh, unweathered sample from recent lava flow. This is the original field sample.",
+    "last_modified_time": "2024-06-15T10:30:00Z",
+    "produced_by": {
+      "label": "Mount Rainier Field Collection 2024-06-10",
+      "identifier": "event:example001",
+      "result_time": "2024-06-10",
+      "project": "Cascade Volcanic Monitoring Project",
+      "has_feature_of_interest": "Recent lava flow on Mount Rainier",
+      "sampling_site": {
+        "identifier": "site:rainier001",
+        "label": "Mount Rainier Summit Area",
+        "place_name": ["Mount Rainier", "Pierce County", "Washington", "USA"],
+        "sample_location": {
+          "latitude": 46.8523,
+          "longitude": -121.7603,
+          "elevation": "4392 m above mean sea level"
+        }
+      },
+      "responsibility": [
+        {
+          "name": "Jane Smith",
+          "role": "collector",
+          "affiliation": "University of Washington"
+        }
+      ]
+    },
+    "has_material_category": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/material/1.0/rock",
+        "label": "Rock",
+        "scheme_name": "iSamples Material Type"
+      }
+    ],
+    "has_sample_object_type": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/specimentype/1.0/physicalspecimen",
+        "label": "Physical specimen"
+      }
+    ],
+    "registrant": {
+      "name": "Jane Smith",
+      "affiliation": "University of Washington"
+    }
+  },
+  {
+    "sample_identifier": "ark:/99999/example002",
+    "label": "Rock Sample MR-001-A (Child - Thin Section)",
+    "description": "Thin section prepared from parent sample MR-001 for petrographic analysis.",
+    "last_modified_time": "2024-07-01T14:00:00Z",
+    "produced_by": {
+      "label": "Lab Preparation 2024-07-01",
+      "identifier": "event:example002",
+      "result_time": "2024-07-01",
+      "description": "Thin section preparation in petrology lab",
+      "responsibility": [
+        {
+          "name": "Lab Technician",
+          "role": "preparer",
+          "affiliation": "University of Washington"
+        }
+      ]
+    },
+    "has_material_category": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/material/1.0/rock",
+        "label": "Rock"
+      }
+    ],
+    "has_sample_object_type": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/specimentype/1.0/thinsection",
+        "label": "Thin section"
+      }
+    ],
+    "related_resource": [
+      {
+        "label": "Parent sample",
+        "relationship": "derivedFrom",
+        "target": "ark:/99999/example001",
+        "description": "This thin section was prepared from the parent rock sample"
+      }
+    ],
+    "registrant": {
+      "name": "Jane Smith",
+      "affiliation": "University of Washington"
+    }
+  },
+  {
+    "sample_identifier": "ark:/99999/example003",
+    "label": "Rock Sample MR-002",
+    "description": "Second basalt sample from same site, collected 10m away from MR-001.",
+    "last_modified_time": "2024-06-15T11:00:00Z",
+    "produced_by": {
+      "label": "Mount Rainier Field Collection 2024-06-10 (Site B)",
+      "identifier": "event:example003",
+      "result_time": "2024-06-10",
+      "project": "Cascade Volcanic Monitoring Project",
+      "has_feature_of_interest": "Recent lava flow on Mount Rainier",
+      "sampling_site": {
+        "identifier": "site:rainier001",
+        "label": "Mount Rainier Summit Area",
+        "place_name": ["Mount Rainier", "Pierce County", "Washington", "USA"],
+        "sample_location": {
+          "latitude": 46.8524,
+          "longitude": -121.7601,
+          "elevation": "4390 m above mean sea level"
+        }
+      },
+      "responsibility": [
+        {
+          "name": "Jane Smith",
+          "role": "collector",
+          "affiliation": "University of Washington"
+        }
+      ]
+    },
+    "has_material_category": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/material/1.0/rock",
+        "label": "Rock"
+      }
+    ],
+    "has_sample_object_type": [
+      {
+        "identifier": "https://w3id.org/isample/vocabulary/specimentype/1.0/physicalspecimen",
+        "label": "Physical specimen"
+      }
+    ],
+    "related_resource": [
+      {
+        "label": "Sibling sample",
+        "relationship": "relatedTo",
+        "target": "ark:/99999/example001",
+        "description": "Collected from same site as MR-001"
+      }
+    ],
+    "registrant": {
+      "name": "Jane Smith",
+      "affiliation": "University of Washington"
+    }
+  }
+]

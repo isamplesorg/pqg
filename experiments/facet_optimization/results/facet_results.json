@@ -1,0 +1,142 @@
+{
+  "baseline": {
+    "source_facet_ms": 34.14,
+    "material_facet_ms": 490.4,
+    "otype_counts_ms": 34.67
+  },
+  "with_summary": {
+    "source_facet_ms": 3.92,
+    "material_facet_ms": 3.5,
+    "context_facet_ms": 3.21
+  },
+  "speedup": {
+    "source": 8.7,
+    "material": 140.1
+  },
+  "summary_files": {
+    "facet_summaries_all.parquet": {
+      "size_bytes": 2118,
+      "row_count": 60
+    },
+    "facet_source_material_cross.parquet": {
+      "size_bytes": 1266,
+      "row_count": 24
+    }
+  },
+  "facet_counts": {
+    "source": {
+      "SESAR": 4688386,
+      "OPENCONTEXT": 1064831,
+      "GEOME": 605554,
+      "SMITHSONIAN": 322161
+    },
+    "material_top10": [
+      "https://w3id.org/isample/vocabulary/material/1.0/earthmaterial",
+      "https://w3id.org/isample/vocabulary/material/1.0/organicmaterial",
+      "https://w3id.org/isample/vocabulary/material/1.0/rock",
+      "https://w3id.org/isample/vocabulary/material/1.0/biogenicnonorganicmaterial",
+      "https://w3id.org/isample/vocabulary/material/1.0/mixedsoilsedimentrock",
+      "https://w3id.org/isample/vocabulary/material/1.0/material",
+      "https://w3id.org/isample/vocabulary/material/1.0/mineral",
+      "https://w3id.org/isample/vocabulary/material/1.0/anthropogenicmetal",
+      "https://w3id.org/isample/opencontext/material/0.1/ceramicclay",
+      "https://w3id.org/isample/vocabulary/material/1.0/sediment"
+    ],
+    "otype_counts": {
+      "MaterialSampleRecord": 6680932,
+      "SamplingEvent": 6354171,
+      "GeospatialCoordLocation": 5980282,
+      "MaterialSampleCuration": 720254,
+      "SampleRelation": 501579,
+      "SamplingSite": 386160,
+      "IdentifiedConcept": 55893,
+      "Agent": 50087
+    },
+    "context_top10": [
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/anysampledfeature",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/pasthumanoccupationsite",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/earthinterior",
+      "https://w3id.org/isample/biology/biosampledfeature/1.0/Animalia",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/subaerialsurfaceenvironment",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/waterbody",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/marinewaterbodybottom",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/lakeriverstreambottom",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/marinewaterbody",
+      "https://w3id.org/isample/vocabulary/sampledfeature/1.0/terrestrialwaterbody"
+    ]
+  },
+  "task_details": {
+    "task1": {
+      "status": "completed",
+      "queries_run": 3,
+      "runs_per_query": 3
+    },
+    "task2": {
+      "status": "completed",
+      "output_file": "/tmp/facet_source_counts.parquet",
+      "row_count": 4,
+      "size_bytes": 542,
+      "generation_time_ms": 32.17
+    },
+    "task3": {
+      "status": "completed",
+      "output_file": "/tmp/facet_material_counts.parquet",
+      "row_count": 19,
+      "size_bytes": 1284,
+      "generation_time_ms": 583.98
+    },
+    "task4": {
+      "status": "completed",
+      "output_file": "/tmp/facet_context_counts.parquet",
+      "row_count": 17,
+      "size_bytes": 1171,
+      "generation_time_ms": 569.76
+    },
+    "task5": {
+      "status": "completed",
+      "output_file": "/tmp/facet_summaries_all.parquet",
+      "row_count": 60,
+      "size_bytes": 2118,
+      "generation_time_ms": 984.68
+    },
+    "task6": {
+      "status": "completed",
+      "output_file": "/tmp/facet_source_material_cross.parquet",
+      "row_count": 24,
+      "size_bytes": 1266,
+      "generation_time_ms": 142.55,
+      "top_combinations": [
+        {
+          "source": "SESAR",
+          "material": "https://w3id.org/isample/vocabulary/material/1.0/earthmaterial",
+          "count": 2233939
+        },
+        {
+          "source": "SESAR",
+          "material": "https://w3id.org/isample/vocabulary/material/1.0/rock",
+          "count": 912855
+        },
+        {
+          "source": "SESAR",
+          "material": "https://w3id.org/isample/vocabulary/material/1.0/mixedsoilsedimentrock",
+          "count": 838805
+        },
+        {
+          "source": "OPENCONTEXT",
+          "material": "https://w3id.org/isample/vocabulary/material/1.0/biogenicnonorganicmaterial",
+          "count": 745539
+        },
+        {
+          "source": "GEOME",
+          "material": "https://w3id.org/isample/vocabulary/material/1.0/organicmaterial",
+          "count": 605554
+        }
+      ]
+    },
+    "task7": {
+      "status": "completed",
+      "speedup_source": 8.7,
+      "speedup_material": 140.1
+    }
+  }
+}
