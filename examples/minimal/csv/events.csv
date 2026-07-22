@@ -1,0 +1,4 @@
+event_id,label,description,result_time,project,feature_of_interest,site_id,location_id,collector_id
+event:example001,Mount Rainier Field Collection 2024-06-10,Field collection during summer geology survey,2024-06-10,Cascade Volcanic Monitoring Project,Recent lava flow on Mount Rainier,site:rainier001,loc:rainier001,agent:jsmith
+event:example002,Lab Preparation 2024-07-01,Thin section preparation in petrology lab,2024-07-01,,,,agent:labtech
+event:example003,Mount Rainier Field Collection 2024-06-10 (Site B),Field collection 10m from first sample,2024-06-10,Cascade Volcanic Monitoring Project,Recent lava flow on Mount Rainier,site:rainier001,loc:rainier002,agent:jsmith

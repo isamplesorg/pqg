@@ -1,0 +1,4 @@
+agent_id,name,role,affiliation,contact_information
+agent:jsmith,Jane Smith,collector,University of Washington,jsmith@uw.edu
+agent:labtech,Lab Technician,preparer,University of Washington,
+agent:curator,Collections Manager,curator,Burke Museum,
