@@ -62,10 +62,18 @@ def convert_isamples_sql(
         print(f"Converting {input_parquet} to {'wide' if wide else 'narrow'} PQG format...")
         print(f"  Site deduplication: {'enabled (precision={})'.format(site_precision) if dedupe_sites else 'disabled'}")
 
-    # Count source rows
-    source_count = con.execute(f"""
-        SELECT COUNT(*) FROM read_parquet('{input_parquet}')
-    """).fetchone()[0]
+    # Count source rows and enforce the ordering precondition: every id assignment
+    # is ordered by sample_identifier, so it must be unique and non-null.
+    source_count, distinct_ids, null_ids = con.execute(f"""
+        SELECT COUNT(*), COUNT(DISTINCT sample_identifier),
+               COUNT(*) FILTER (WHERE sample_identifier IS NULL)
+        FROM read_parquet('{input_parquet}')
+    """).fetchone()
+    if null_ids or distinct_ids != source_count:
+        raise ValueError(
+            f"sample_identifier must be unique and non-null for deterministic conversion: "
+            f"{source_count:,} rows, {distinct_ids:,} distinct, {null_ids:,} NULL"
+        )
     stats["source_rows"] = source_count
     if verbose:
         print(f"  Source rows: {source_count:,}")
@@ -144,7 +152,7 @@ def _convert_staged(
     con.execute(f"""
         CREATE TEMP TABLE source AS
         SELECT
-            row_number() OVER () as src_row_id,
+            row_number() OVER (ORDER BY sample_identifier) as src_row_id,
             *
         FROM read_parquet('{input_parquet}')
     """)
@@ -213,7 +221,7 @@ def _convert_staged(
         CREATE TEMP TABLE events AS
         SELECT
             -- Core identification
-            {sample_max} + row_number() OVER () as row_id,
+            {sample_max} + row_number() OVER (ORDER BY src_row_id) as row_id,
             sample_identifier || '_event' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -291,7 +299,7 @@ def _convert_staged(
         CREATE TEMP TABLE sites AS
         SELECT
             -- Core identification
-            {event_max} + row_number() OVER () as row_id,
+            {event_max} + row_number() OVER (ORDER BY site_pid) as row_id,
             site_pid as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -301,7 +309,7 @@ def _convert_staged(
             NULL::VARCHAR as p,
             NULL::INTEGER[] as o,
             -- Graph metadata
-            first(n) as n,
+            first(n ORDER BY src_row_id) as n,
             NULL::VARCHAR[] as altids,
             NULL::GEOMETRY as geometry,
             -- Entity columns
@@ -330,13 +338,14 @@ def _convert_staged(
             NULL::VARCHAR as curation_location,
             NULL::VARCHAR as last_modified_time,
             NULL::VARCHAR[] as access_constraints,
-            first(place_name) as place_name,
-            first(description) as description,
-            first(label) as label,
+            first(place_name ORDER BY src_row_id) as place_name,
+            first(description ORDER BY src_row_id) as description,
+            first(label ORDER BY src_row_id) as label,
             NULL::VARCHAR as thumbnail_url
         FROM (
             SELECT
                 sts.site_pid,
+                s.src_row_id,
                 s.produced_by.sampling_site.label as label,
                 s.produced_by.sampling_site.description as description,
                 s.source_collection as n,
@@ -354,7 +363,7 @@ def _convert_staged(
         CREATE TEMP TABLE locations AS
         SELECT
             -- Core identification
-            {site_max} + row_number() OVER () as row_id,
+            {site_max} + row_number() OVER (ORDER BY src_row_id) as row_id,
             sample_identifier || '_location' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -417,15 +426,15 @@ def _convert_staged(
     con.execute(f"""
         CREATE TEMP TABLE object_types AS
         WITH expanded AS (
-            SELECT unnest.identifier AS pid
+            SELECT unnest.item.identifier AS pid
             FROM source
-            CROSS JOIN UNNEST(has_sample_object_type) AS unnest
+            CROSS JOIN UNNEST(has_sample_object_type) WITH ORDINALITY AS unnest(item, ord)
             WHERE has_sample_object_type IS NOT NULL
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
             -- Core identification
-            {location_max} + row_number() OVER () as row_id,
+            {location_max} + row_number() OVER (ORDER BY pid) as row_id,
             pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -477,15 +486,15 @@ def _convert_staged(
     con.execute(f"""
         CREATE TEMP TABLE materials AS
         WITH expanded AS (
-            SELECT unnest.identifier AS pid
+            SELECT unnest.item.identifier AS pid
             FROM source
-            CROSS JOIN UNNEST(has_material_category) AS unnest
+            CROSS JOIN UNNEST(has_material_category) WITH ORDINALITY AS unnest(item, ord)
             WHERE has_material_category IS NOT NULL
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
             -- Core identification
-            {object_type_max} + row_number() OVER () as row_id,
+            {object_type_max} + row_number() OVER (ORDER BY d.pid) as row_id,
             d.pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -539,15 +548,15 @@ def _convert_staged(
     con.execute(f"""
         CREATE TEMP TABLE contexts AS
         WITH expanded AS (
-            SELECT unnest.identifier AS pid
+            SELECT unnest.item.identifier AS pid
             FROM source
-            CROSS JOIN UNNEST(has_context_category) AS unnest
+            CROSS JOIN UNNEST(has_context_category) WITH ORDINALITY AS unnest(item, ord)
             WHERE has_context_category IS NOT NULL
         ),
         dedup AS (SELECT DISTINCT pid FROM expanded)
         SELECT
             -- Core identification
-            {material_max} + row_number() OVER () as row_id,
+            {material_max} + row_number() OVER (ORDER BY d.pid) as row_id,
             d.pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -602,15 +611,15 @@ def _convert_staged(
     con.execute(f"""
         CREATE TEMP TABLE keywords AS
         WITH expanded AS (
-            SELECT 'keyword:' || unnest.keyword AS pid, unnest.keyword AS kw_label
+            SELECT 'keyword:' || unnest.item.keyword AS pid, unnest.item.keyword AS kw_label
             FROM source
-            CROSS JOIN UNNEST(keywords) AS unnest
+            CROSS JOIN UNNEST(keywords) WITH ORDINALITY AS unnest(item, ord)
             WHERE keywords IS NOT NULL
         ),
         dedup AS (SELECT DISTINCT pid, kw_label FROM expanded)
         SELECT
             -- Core identification
-            {context_max} + row_number() OVER () as row_id,
+            {context_max} + row_number() OVER (ORDER BY pid) as row_id,
             pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -677,7 +686,7 @@ def _convert_staged(
         dedup AS (SELECT DISTINCT pid, agent_name FROM expanded)
         SELECT
             -- Core identification
-            {keyword_max} + row_number() OVER () as row_id,
+            {keyword_max} + row_number() OVER (ORDER BY pid, agent_name) as row_id,
             pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -730,20 +739,20 @@ def _convert_staged(
         CREATE TEMP TABLE responsibility_agents AS
         WITH expanded AS (
             SELECT
-                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) AS pid,
-                unnest.name AS agent_name,
-                unnest.role AS agent_role
+                'agent:' || LOWER(TRIM(unnest.item.name)) || ':' || LOWER(TRIM(COALESCE(unnest.item.role, 'unknown'))) AS pid,
+                unnest.item.name AS agent_name,
+                unnest.item.role AS agent_role
             FROM source
-            CROSS JOIN UNNEST(produced_by.responsibility) AS unnest
+            CROSS JOIN UNNEST(produced_by.responsibility) WITH ORDINALITY AS unnest(item, ord)
             WHERE produced_by IS NOT NULL
               AND produced_by.responsibility IS NOT NULL
-              AND unnest.name IS NOT NULL
-              AND TRIM(unnest.name) != ''
+              AND unnest.item.name IS NOT NULL
+              AND TRIM(unnest.item.name) != ''
         ),
         dedup AS (SELECT DISTINCT pid, agent_name, agent_role FROM expanded)
         SELECT
             -- Core identification
-            {registrant_max} + row_number() OVER () as row_id,
+            {registrant_max} + row_number() OVER (ORDER BY d.pid, d.agent_name, d.agent_role) as row_id,
             d.pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -799,7 +808,7 @@ def _convert_staged(
         CREATE TEMP TABLE curations AS
         SELECT
             -- Core identification
-            {agent_max} + row_number() OVER () as row_id,
+            {agent_max} + row_number() OVER (ORDER BY src_row_id) as row_id,
             sample_identifier || '_curation' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -854,20 +863,20 @@ def _convert_staged(
         CREATE TEMP TABLE curation_agents AS
         WITH expanded AS (
             SELECT
-                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'curator'))) AS pid,
-                unnest.name AS agent_name,
-                unnest.role AS agent_role
+                'agent:' || LOWER(TRIM(unnest.item.name)) || ':' || LOWER(TRIM(COALESCE(unnest.item.role, 'curator'))) AS pid,
+                unnest.item.name AS agent_name,
+                unnest.item.role AS agent_role
             FROM source
-            CROSS JOIN UNNEST(curation.responsibility) AS unnest
+            CROSS JOIN UNNEST(curation.responsibility) WITH ORDINALITY AS unnest(item, ord)
             WHERE curation IS NOT NULL
               AND curation.responsibility IS NOT NULL
-              AND unnest.name IS NOT NULL
-              AND TRIM(unnest.name) != ''
+              AND unnest.item.name IS NOT NULL
+              AND TRIM(unnest.item.name) != ''
         ),
         dedup AS (SELECT DISTINCT pid, agent_name, agent_role FROM expanded)
         SELECT
             -- Core identification
-            {curation_max} + row_number() OVER () as row_id,
+            {curation_max} + row_number() OVER (ORDER BY d.pid, d.agent_name, d.agent_role) as row_id,
             d.pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -925,16 +934,16 @@ def _convert_staged(
         CREATE TEMP TABLE sample_relations AS
         WITH expanded AS (
             SELECT DISTINCT
-                unnest.target AS target_pid
+                unnest.item.target AS target_pid
             FROM source
-            CROSS JOIN UNNEST(related_resource) AS unnest
+            CROSS JOIN UNNEST(related_resource) WITH ORDINALITY AS unnest(item, ord)
             WHERE related_resource IS NOT NULL
-              AND unnest.target IS NOT NULL
-              AND TRIM(unnest.target) != ''
+              AND unnest.item.target IS NOT NULL
+              AND TRIM(unnest.item.target) != ''
         )
         SELECT
             -- Core identification
-            {curation_agent_max} + row_number() OVER () as row_id,
+            {curation_agent_max} + row_number() OVER (ORDER BY target_pid) as row_id,
             'relation:' || target_pid as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1014,7 +1023,7 @@ def _convert_staged(
         _build_wide_output_staged(con, output_parquet, verbose)
     else:
         # Narrow format: entities + edge rows
-        _build_narrow_edges_staged(con, output_parquet, agent_max, verbose)
+        _build_narrow_edges_staged(con, output_parquet, sample_relation_max, verbose)
 
 
 def _edge_null_columns_sql() -> str:
@@ -1034,7 +1043,7 @@ def _edge_null_columns_sql() -> str:
     return get_null_columns_sql(ENTITY_COLUMNS)
 
 
-def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose: bool) -> None:
+def _build_narrow_edges_staged(con, output_parquet: str, entity_max: int, verbose: bool) -> None:
     """Create edge rows and combine with entities for narrow format output."""
 
     if verbose:
@@ -1047,7 +1056,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         CREATE TEMP TABLE edge_produced_by AS
         SELECT
             -- Core identification
-            {agent_max} + row_number() OVER () as row_id,
+            {entity_max} + row_number() OVER (ORDER BY s.src_row_id) as row_id,
             s.sample_identifier || '_edge_produced_by' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1068,14 +1077,14 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         WHERE s.produced_by IS NOT NULL
     """)
 
-    edge_pb_max = con.execute(f"SELECT COALESCE(MAX(row_id), {agent_max}) FROM edge_produced_by").fetchone()[0]
+    edge_pb_max = con.execute(f"SELECT COALESCE(MAX(row_id), {entity_max}) FROM edge_produced_by").fetchone()[0]
 
     # Edge: Event -> sampling_site -> Site (full 40-column schema)
     con.execute(f"""
         CREATE TEMP TABLE edge_sampling_site AS
         SELECT
             -- Core identification
-            {edge_pb_max} + row_number() OVER () as row_id,
+            {edge_pb_max} + row_number() OVER (ORDER BY s.src_row_id) as row_id,
             s.sample_identifier || '_edge_sampling_site' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1106,7 +1115,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         CREATE TEMP TABLE edge_event_location AS
         SELECT
             -- Core identification
-            {edge_ss_max} + row_number() OVER () as row_id,
+            {edge_ss_max} + row_number() OVER (ORDER BY s.src_row_id) as row_id,
             evt.pid || '_edge_sample_location' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1136,7 +1145,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         CREATE TEMP TABLE edge_site_location AS
         SELECT
             -- Core identification
-            {edge_el_max} + row_number() OVER () as row_id,
+            {edge_el_max} + row_number() OVER (ORDER BY site.pid, s.sample_identifier) as row_id,
             site.pid || '_edge_site_location' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1162,7 +1171,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         QUALIFY row_number() OVER (PARTITION BY site.pid ORDER BY s.sample_identifier) = 1
     """)
 
-    edge_sl_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_ss_max}) FROM edge_site_location").fetchone()[0]
+    edge_sl_max = con.execute(f"SELECT COALESCE(MAX(row_id), {edge_el_max}) FROM edge_site_location").fetchone()[0]
 
     # Edge: Sample -> has_sample_object_type -> Concept (full 40-column schema)
     con.execute(f"""
@@ -1171,15 +1180,16 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.identifier as concept_id
+                unnest.ord as ord,
+                unnest.item.identifier as concept_id
             FROM source s
-            CROSS JOIN UNNEST(s.has_sample_object_type) as unnest
+            CROSS JOIN UNNEST(s.has_sample_object_type) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.has_sample_object_type IS NOT NULL
         )
         SELECT
             -- Core identification
-            {edge_sl_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_object_type_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_sl_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, concept.row_id) as row_id,
+            e.sample_identifier || '_edge_object_type_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, concept.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1207,15 +1217,16 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.identifier as concept_id
+                unnest.ord as ord,
+                unnest.item.identifier as concept_id
             FROM source s
-            CROSS JOIN UNNEST(s.has_material_category) as unnest
+            CROSS JOIN UNNEST(s.has_material_category) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.has_material_category IS NOT NULL
         )
         SELECT
             -- Core identification
-            {edge_ot_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_material_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_ot_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, concept.row_id) as row_id,
+            e.sample_identifier || '_edge_material_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, concept.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1243,15 +1254,16 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.identifier as concept_id
+                unnest.ord as ord,
+                unnest.item.identifier as concept_id
             FROM source s
-            CROSS JOIN UNNEST(s.has_context_category) as unnest
+            CROSS JOIN UNNEST(s.has_context_category) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.has_context_category IS NOT NULL
         )
         SELECT
             -- Core identification
-            {edge_mat_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_context_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_mat_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, concept.row_id) as row_id,
+            e.sample_identifier || '_edge_context_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, concept.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1279,15 +1291,16 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                'keyword:' || unnest.keyword as concept_id
+                unnest.ord as ord,
+                'keyword:' || unnest.item.keyword as concept_id
             FROM source s
-            CROSS JOIN UNNEST(s.keywords) as unnest
+            CROSS JOIN UNNEST(s.keywords) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.keywords IS NOT NULL
         )
         SELECT
             -- Core identification
-            {edge_ctx_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_keyword_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_ctx_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, concept.row_id) as row_id,
+            e.sample_identifier || '_edge_keyword_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, concept.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1313,7 +1326,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         CREATE TEMP TABLE edge_registrant AS
         SELECT
             -- Core identification
-            {edge_kw_max} + row_number() OVER () as row_id,
+            {edge_kw_max} + row_number() OVER (ORDER BY s.src_row_id, agent.row_id) as row_id,
             s.sample_identifier || '_edge_registrant' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1345,20 +1358,21 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.name as agent_name,
-                unnest.role as agent_role,
-                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'unknown'))) as agent_pid
+                unnest.ord as ord,
+                unnest.item.name as agent_name,
+                unnest.item.role as agent_role,
+                'agent:' || LOWER(TRIM(unnest.item.name)) || ':' || LOWER(TRIM(COALESCE(unnest.item.role, 'unknown'))) as agent_pid
             FROM source s
-            CROSS JOIN UNNEST(s.produced_by.responsibility) as unnest
+            CROSS JOIN UNNEST(s.produced_by.responsibility) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.produced_by IS NOT NULL
               AND s.produced_by.responsibility IS NOT NULL
-              AND unnest.name IS NOT NULL
-              AND TRIM(unnest.name) != ''
+              AND unnest.item.name IS NOT NULL
+              AND TRIM(unnest.item.name) != ''
         )
         SELECT
             -- Core identification
-            {edge_reg_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_responsibility_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_reg_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, agent.row_id) as row_id,
+            e.sample_identifier || '_edge_responsibility_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, agent.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1384,7 +1398,7 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
         CREATE TEMP TABLE edge_msr_curation AS
         SELECT
             -- Core identification
-            {edge_resp_max} + row_number() OVER () as row_id,
+            {edge_resp_max} + row_number() OVER (ORDER BY s.src_row_id) as row_id,
             s.sample_identifier || '_edge_curation' as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
@@ -1414,20 +1428,21 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.name as agent_name,
-                unnest.role as agent_role,
-                'agent:' || LOWER(TRIM(unnest.name)) || ':' || LOWER(TRIM(COALESCE(unnest.role, 'curator'))) as agent_pid
+                unnest.ord as ord,
+                unnest.item.name as agent_name,
+                unnest.item.role as agent_role,
+                'agent:' || LOWER(TRIM(unnest.item.name)) || ':' || LOWER(TRIM(COALESCE(unnest.item.role, 'curator'))) as agent_pid
             FROM source s
-            CROSS JOIN UNNEST(s.curation.responsibility) as unnest
+            CROSS JOIN UNNEST(s.curation.responsibility) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.curation IS NOT NULL
               AND s.curation.responsibility IS NOT NULL
-              AND unnest.name IS NOT NULL
-              AND TRIM(unnest.name) != ''
+              AND unnest.item.name IS NOT NULL
+              AND TRIM(unnest.item.name) != ''
         )
         SELECT
             -- Core identification
-            {edge_cur_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_curation_responsibility_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_cur_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, agent.row_id) as row_id,
+            e.sample_identifier || '_edge_curation_responsibility_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, agent.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1456,17 +1471,18 @@ def _build_narrow_edges_staged(con, output_parquet: str, agent_max: int, verbose
             SELECT
                 s.sample_identifier,
                 s.source_collection,
-                unnest.target as target_pid
+                unnest.ord as ord,
+                unnest.item.target as target_pid
             FROM source s
-            CROSS JOIN UNNEST(s.related_resource) as unnest
+            CROSS JOIN UNNEST(s.related_resource) WITH ORDINALITY AS unnest(item, ord)
             WHERE s.related_resource IS NOT NULL
-              AND unnest.target IS NOT NULL
-              AND TRIM(unnest.target) != ''
+              AND unnest.item.target IS NOT NULL
+              AND TRIM(unnest.item.target) != ''
         )
         SELECT
             -- Core identification
-            {edge_cur_resp_max} + row_number() OVER () as row_id,
-            e.sample_identifier || '_edge_related_' || row_number() OVER (PARTITION BY e.sample_identifier) as pid,
+            {edge_cur_resp_max} + row_number() OVER (ORDER BY e.sample_identifier, e.ord, rel.row_id) as row_id,
+            e.sample_identifier || '_edge_related_' || row_number() OVER (PARTITION BY e.sample_identifier ORDER BY e.ord, rel.row_id) as pid,
             NULL::INTEGER as tcreated,
             NULL::INTEGER as tmodified,
             '_edge_' as otype,
@@ -1543,6 +1559,7 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
             (SELECT agent.row_id
              FROM pid_lookup agent
              WHERE agent.pid = 'agent:' || LOWER(TRIM(s.registrant.name))
+             ORDER BY agent.row_id
              LIMIT 1
             ) as p__registrant,
             rel_agg.row_ids as p__related_resource
@@ -1551,28 +1568,28 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         LEFT JOIN pid_lookup evt ON evt.pid = s.sample_identifier || '_event'
         LEFT JOIN pid_lookup cur ON cur.pid = s.sample_identifier || '_curation'
         LEFT JOIN LATERAL (
-            SELECT list(ot_lookup.row_id) as row_ids
-            FROM UNNEST(s.has_sample_object_type) as t(ot)
+            SELECT list(ot_lookup.row_id ORDER BY t.ord, ot_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_sample_object_type) WITH ORDINALITY as t(ot, ord)
             JOIN pid_lookup ot_lookup ON ot_lookup.pid = ot.identifier
         ) ot_agg ON true
         LEFT JOIN LATERAL (
-            SELECT list(mat_lookup.row_id) as row_ids
-            FROM UNNEST(s.has_material_category) as t(mat)
+            SELECT list(mat_lookup.row_id ORDER BY t.ord, mat_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_material_category) WITH ORDINALITY as t(mat, ord)
             JOIN pid_lookup mat_lookup ON mat_lookup.pid = mat.identifier
         ) mat_agg ON true
         LEFT JOIN LATERAL (
-            SELECT list(ctx_lookup.row_id) as row_ids
-            FROM UNNEST(s.has_context_category) as t(ctx)
+            SELECT list(ctx_lookup.row_id ORDER BY t.ord, ctx_lookup.row_id) as row_ids
+            FROM UNNEST(s.has_context_category) WITH ORDINALITY as t(ctx, ord)
             JOIN pid_lookup ctx_lookup ON ctx_lookup.pid = ctx.identifier
         ) ctx_agg ON true
         LEFT JOIN LATERAL (
-            SELECT list(kw_lookup.row_id) as row_ids
-            FROM UNNEST(s.keywords) as t(kw)
+            SELECT list(kw_lookup.row_id ORDER BY t.ord, kw_lookup.row_id) as row_ids
+            FROM UNNEST(s.keywords) WITH ORDINALITY as t(kw, ord)
             JOIN pid_lookup kw_lookup ON kw_lookup.pid = 'keyword:' || kw.keyword
         ) kw_agg ON true
         LEFT JOIN LATERAL (
-            SELECT list(rel_lookup.row_id) as row_ids
-            FROM UNNEST(s.related_resource) as t(rel)
+            SELECT list(rel_lookup.row_id ORDER BY t.ord, rel_lookup.row_id) as row_ids
+            FROM UNNEST(s.related_resource) WITH ORDINALITY as t(rel, ord)
             JOIN pid_lookup rel_lookup ON rel_lookup.pid = 'relation:' || rel.target
             WHERE rel.target IS NOT NULL AND TRIM(rel.target) != ''
         ) rel_agg ON true
@@ -1599,8 +1616,8 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         LEFT JOIN pid_lookup site ON site.pid = sts.site_pid
         LEFT JOIN pid_lookup loc ON loc.pid = s.sample_identifier || '_location'
         LEFT JOIN LATERAL (
-            SELECT list(agent.row_id) as row_ids
-            FROM UNNEST(s.produced_by.responsibility) as t(resp)
+            SELECT list(agent.row_id ORDER BY t.ord, agent.row_id) as row_ids
+            FROM UNNEST(s.produced_by.responsibility) WITH ORDINALITY as t(resp, ord)
             JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(resp.name)) || ':' || LOWER(TRIM(COALESCE(resp.role, 'unknown')))
             WHERE resp.name IS NOT NULL AND TRIM(resp.name) != ''
         ) resp_agg ON true
@@ -1641,8 +1658,8 @@ def _build_wide_output_staged(con, output_parquet: str, verbose: bool) -> None:
         FROM curations cur
         JOIN source s ON s.sample_identifier || '_curation' = cur.pid
         LEFT JOIN LATERAL (
-            SELECT list(agent.row_id) as row_ids
-            FROM UNNEST(s.curation.responsibility) as t(resp)
+            SELECT list(agent.row_id ORDER BY t.ord, agent.row_id) as row_ids
+            FROM UNNEST(s.curation.responsibility) WITH ORDINALITY as t(resp, ord)
             JOIN pid_lookup agent ON agent.pid = 'agent:' || LOWER(TRIM(resp.name)) || ':' || LOWER(TRIM(COALESCE(resp.role, 'curator')))
             WHERE resp.name IS NOT NULL AND TRIM(resp.name) != ''
         ) resp_agg ON true

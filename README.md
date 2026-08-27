@@ -265,6 +265,44 @@ pqg geo my_graph.parquet > output.geojson
 
 See the [CLI Reference](docs/cli-reference.md) for complete documentation.
 
+### Converting the iSamples export
+
+`pqg.sql_converter` turns the iSamples export parquet (Zenodo
+[doi:10.5281/zenodo.15278211](https://doi.org/10.5281/zenodo.15278211)) into narrow or wide PQG:
+
+```bash
+# narrow (entities + edge rows)
+python -m pqg.sql_converter isamples_export.parquet out_narrow.parquet
+# wide (relationships as p__* columns)
+python -m pqg.sql_converter isamples_export.parquet out_wide.parquet --wide
+```
+
+or from Python, `from pqg.sql_converter import convert_isamples_sql`.
+
+**Determinism contract.** Given identical input bytes the converter produces identical
+*rows* — every entity, edge, `row_id`, and `p__*` array — independent of DuckDB thread count.
+With the pinned DuckDB (see `uv.lock`) the output *files* are byte-identical too, verified
+on the full April 2025 export; DuckDB itself only documents row-order preservation
+(`preserve_insertion_order`), not stable Parquet encoding, so treat byte identity as
+verified-per-version rather than guaranteed across DuckDB upgrades.
+
+Precondition: `sample_identifier` must be unique and non-null (the converter raises
+otherwise). Ordering rules: source rows by `sample_identifier`; de-duplicated
+concepts/agents/sites by `pid`; multi-valued edges by the source row and the array
+position, with the joined target `row_id` as tie-break; site de-duplication keeps the
+fields of the member with the lowest `sample_identifier`; wide `p__*` arrays preserve
+the input array order.
+
+Observable consequences worth knowing: (1) agent pids are case- and whitespace-folded
+while agents are de-duplicated on `(pid, name, role)`, so one pid can map to several
+Agent rows (isamplesorg/pqg#28) — narrow output then emits one edge per matching row and
+wide `p__registrant` keeps the lowest `row_id`; (2) the `_edge_<kind>_N` suffix is the
+rank after join expansion, which equals the array position except in that duplicate case;
+(3) `p__*` arrays are in source-list order, so consumers that assumed set semantics are
+unaffected and consumers that assumed a different order now get a stable one.
+
+`tests/test_determinism.py` enforces this on a committed 140-row fixture.
+
 ## Why PQG?
 
 **vs. Neo4j / Full Graph Databases:**
